@@ -1,0 +1,49 @@
+# Production-hardened compose file for FileFerry.
+# See STANDARDS.md §7 for the security posture rationale.
+services:
+  fileferry:
+    build:
+      context: .
+      dockerfile: Dockerfile
+    image: fileferry:0.1.0-rc.1
+    container_name: fileferry
+    ports:
+      - "8080:8080"
+    # The image ships fileferry.yaml + an empty /app/data baked in
+    # as the demo. Override any of those with bind mounts:
+    #
+    # volumes:
+    #   - ./fileferry.yaml:/app/fileferry.yaml:ro   # your own config
+    #   - ./data:/app/data:rw                       # persistent local file store
+    environment:
+      - RUST_LOG=info
+      # S3 credentials come from env vars named by fileferry.yaml.
+      # Uncomment and populate on real deployments — never inline the
+      # secret values here.
+      # - FILEFERRY_S3_ACCESS_KEY_ID=<from-your-secret-manager>
+      # - FILEFERRY_S3_SECRET_ACCESS_KEY=<from-your-secret-manager>
+    restart: unless-stopped
+    # NOT read-only: the FS backend writes into /app/data at runtime.
+    # Every other hardening (cap_drop, no-new-privileges, non-root
+    # uid, resource limits) still applies. If your deployment only
+    # uses the S3 backend, you can safely set `read_only: true` and
+    # drop the data volume.
+    tmpfs:
+      - /tmp:size=64M
+    security_opt:
+      - no-new-privileges:true
+    cap_drop:
+      - ALL
+    deploy:
+      resources:
+        limits:
+          cpus: '2.0'
+          memory: 512M
+        reservations:
+          memory: 128M
+    healthcheck:
+      test: ["CMD", "curl", "-fsS", "http://localhost:8080/health"]
+      interval: 30s
+      timeout: 10s
+      retries: 3
+      start_period: 40s

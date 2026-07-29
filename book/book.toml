@@ -1,0 +1,33 @@
+[book]
+title = "FileFerry"
+authors = ["Rainer Türner"]
+description = "Reference documentation for FileFerry — a Rust file-transfer proxy."
+language = "en"
+src = "src"
+
+[output.html]
+default-theme = "light"
+preferred-dark-theme = "light"
+git-repository-url = "https://github.com/turnerrainer/FileFerry"
+edit-url-template = "https://github.com/turnerrainer/FileFerry/edit/dev/book/{path}"
+site-url = "/FileFerry/"
+
+[output.html.search]
+enable = true
+limit-results = 30
+teaser-word-count = 30
+use-boolean-and = true
+boost-title = 2
+boost-hierarchy = 1
+boost-paragraph = 1
+
+[output.html.playground]
+runnable = false
+
+# mdbook-linkcheck fails the build on broken internal links
+# (chapter-to-chapter). External URLs are skipped
+# (`follow-web-links = false`) since CI would flake on rate-limited
+# github.com responses. Internal breakage is what matters.
+[output.linkcheck]
+follow-web-links = false
+warning-policy = "error"

@@ -1,0 +1,44 @@
+# FileFerry default configuration.
+#
+# Ships with the repo so `docker compose up` / `cargo run` "just works"
+# out of the box against the local filesystem backend. The S3 backend
+# is DISABLED by default — enable it by providing the four required
+# env vars and uncommenting the s3: block below.
+#
+# Full reference: book/src/configuration.md
+# Search order:  --config <path>  >  FILEFERRY_CONFIG env  >  ./fileferry.yaml
+# > built-in defaults.
+
+# HTTP server bind port.
+port: 8080
+
+# Serve the auto-generated /api endpoint listing the HTTP surface.
+documentation_enabled: true
+
+# CORS. Leave empty for same-origin only. "*" for open (dev only).
+cors_origin: ""
+
+# Local filesystem backend. Directory FileFerry reads from and writes
+# into. Must exist and be writable by the runtime user (uid 1000 in
+# the shipped Docker image).
+fs:
+  data_directory: ./data
+
+# S3 (or S3-compatible) backend. Uncomment and fill in on real
+# deployments. Credentials are ALWAYS read from env vars named
+# below — never inlined here. See DEV-REQUIREMENTS §5.2.
+#
+# s3:
+#   region: us-east-1
+#   endpoint_url: ""                          # empty = default AWS endpoint; set for MinIO/LocalStack
+#   bucket: your-bucket
+#   bucket_path: ""                           # optional prefix inside the bucket
+#   access_key_id_env: FILEFERRY_S3_ACCESS_KEY_ID
+#   secret_access_key_env: FILEFERRY_S3_SECRET_ACCESS_KEY
+
+# Resource ceilings — bounded memory per request. Enforced at the
+# axum layer (inbound) and streaming layer (outbound).
+limits:
+  max_request_bytes: 33554432        # 32 MiB — file uploads via POST /v1/files/copy carry only JSON metadata
+  max_response_bytes: 5368709120     # 5 GiB — upper bound on a single-object download stream
+  request_timeout_secs: 300          # 5 min — large-file transfers dominate; per-op cap

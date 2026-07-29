@@ -1,0 +1,8 @@
+FileFerry
+Copyright 2026 Rainer Türner
+
+This product includes software developed at
+turnerrainer / Buerostack (https://github.com/turnerrainer).
+
+Rust re-implementation of the original S3-Ferry
+(https://github.com/buerokratt/S3-Ferry).

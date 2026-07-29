@@ -1,0 +1,36 @@
+# Rust
+/target/
+/target-local/
+**/*.rs.bk
+# Cargo.lock IS tracked — binary crate, needed for reproducible
+# Docker image builds and locked CI runs. See DEV-REQUIREMENTS §2.
+
+# IDE
+.idea/
+.vscode/
+*.swp
+*.swo
+*~
+
+# OS
+.DS_Store
+Thumbs.db
+
+# Logs
+*.log
+
+# Testing
+coverage/
+
+# mdBook output
+/book/book/
+
+# Claude Code working state
+/.claude/
+
+# Environment
+.env
+.env.local
+
+# Local runtime data (never commit ingested files)
+/data/

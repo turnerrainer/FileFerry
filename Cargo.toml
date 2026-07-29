@@ -1,0 +1,62 @@
+[package]
+name = "fileferry"
+version = "0.1.0-rc.1"
+edition = "2021"
+rust-version = "1.94"
+authors = ["Rainer Türner"]
+license = "Apache-2.0"
+description = "FileFerry — Rust re-implementation of Buerokratt S3-Ferry. Generic file-transfer proxy."
+repository = "https://github.com/turnerrainer/FileFerry"
+
+[dependencies]
+axum = "0.7"
+tokio = { version = "1", features = ["full"] }
+tokio-util = { version = "0.7", features = ["io"] }
+tower = { version = "0.4", features = ["util"] }
+tower-http = { version = "0.5", features = ["limit", "trace", "timeout"] }
+http-body-util = "0.1"
+
+serde = { version = "1", features = ["derive"] }
+serde_json = "1"
+serde_yaml_ng = "0.10"
+
+# AWS SDK for S3. `behavior-version-latest` acknowledges we opt into
+# the newest client defaults; `rustls` avoids linking OpenSSL twice.
+aws-config = { version = "1", default-features = false, features = ["behavior-version-latest", "rustls", "rt-tokio"] }
+aws-sdk-s3 = { version = "1", default-features = false, features = ["behavior-version-latest", "rustls", "rt-tokio"] }
+aws-credential-types = "1"
+aws-smithy-types = "1"
+aws-smithy-runtime-api = "1"
+
+tracing = "0.1"
+tracing-subscriber = { version = "0.3", features = ["env-filter"] }
+
+thiserror = "2"
+anyhow = "1"
+async-trait = "0.1"
+futures = "0.3"
+bytes = "1"
+
+# The S3 backend buffers uploads to a NamedTempFile before handing
+# aws-sdk-s3 a length-known ByteStream. See src/backend/s3.rs.
+tempfile = "3"
+
+[dev-dependencies]
+tower = { version = "0.4", features = ["util"] }
+
+[[bin]]
+name = "fileferry"
+path = "src/main.rs"
+
+[lib]
+name = "fileferry"
+path = "src/lib.rs"
+
+# Clippy posture — matches XTR and DEV-REQUIREMENTS §2.
+# `cargo clippy --all-targets -- -D warnings` is the CI gate.
+[lints.clippy]
+
+[profile.release]
+lto = "thin"
+codegen-units = 1
+strip = "symbols"
