@@ -4,7 +4,7 @@ name: Publish container image
 #
 # Tag-push (the normal path):
 #   v0.1.0         → stable release
-#   v0.1.0-rc.1    → pre-release (rc / beta / alpha / preview / any suffix)
+#   v0.1.0-alpha.1 → pre-release (alpha / beta / rc / preview / any suffix)
 # The `derive version tags` step below reads which shape was pushed
 # and chooses whether to move :latest and :major.minor accordingly.
 #
@@ -20,7 +20,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to publish (e.g. v0.1.0-rc.1). Must already exist on the repo."
+        description: "Existing tag to publish (e.g. v0.1.0-alpha.1). Must already exist on the repo."
         required: true
         type: string
 
@@ -47,9 +47,9 @@ jobs:
       # Derive the tag list. Two paths:
       #   * Stable release (`v0.1.0`):
       #       → push :0.1.0, :0.1, :latest
-      #   * Pre-release  (`v0.1.0-rc.1`, `v0.2.0-beta.1`, ...):
-      #       → push :0.1.0-rc.1 AND :<suffix-type> (e.g. :rc, :beta,
-      #         :alpha). Never move :latest or :0.1 from a pre-
+      #   * Pre-release  (`v0.1.0-alpha.1`, `v0.2.0-beta.1`, ...):
+      #       → push :0.1.0-alpha.1 AND :<suffix-type> (e.g. :alpha,
+      #         :beta, :rc). Never move :latest or :0.1 from a pre-
       #         release — those are the implicit-trust tags.
       - name: Compose image tags
         id: meta

@@ -9,7 +9,7 @@ release binary builds; container image built locally and
 local mdbook is 0.5.x, incompatible with linkcheck 0.7.7; CI
 pins mdbook 0.4.40 which does work).
 **Branch**: `dev` — first commit staged locally.
-**Release**: `v0.1.0-rc.1` — **not yet tagged, not yet pushed**.
+**Release**: `v0.1.0-alpha.1` — **not yet tagged, not yet pushed**.
 The GitHub repo has not been created either. See "Publishing"
 below.
 
@@ -63,15 +63,15 @@ docker rm -f fileferry
 Everything up to publish is prepared. Actual push to Docker Hub +
 GHCR is a **manual step** that requires:
 
-1. **Create the GitHub repo** — `gh repo create turnerrainer/FileFerry --public`
+1. **Create the GitHub repo** — `gh repo create turnerrainer/fileferry --public`
 2. **Push the local branch** — `git push -u origin dev`
-3. **Enable Actions permissions** — `gh api repos/turnerrainer/FileFerry/actions/permissions/workflow -X PUT -F 'default_workflow_permissions=write' -F 'can_approve_pull_request_reviews=false'`
-4. **Enable Pages** — `gh api repos/turnerrainer/FileFerry/pages -X POST -f 'build_type=workflow'`
+3. **Enable Actions permissions** — `gh api repos/turnerrainer/fileferry/actions/permissions/workflow -X PUT -F 'default_workflow_permissions=write' -F 'can_approve_pull_request_reviews=false'`
+4. **Enable Pages** — `gh api repos/turnerrainer/fileferry/pages -X POST -f 'build_type=workflow'`
 5. **Create the Docker Hub repo** — Hub UI → New → `turnerrainer/fileferry` → public
 6. **Generate a scoped Docker Hub token** and set repo secrets:
    - `DOCKERHUB_USERNAME` = `turnerrainer`
    - `DOCKERHUB_TOKEN` = the token (via `gh secret set` from stdin)
-7. **Cut the release tag** — `git tag -a v0.1.0-rc.1 -m "FileFerry v0.1.0-rc.1"` + `git push origin v0.1.0-rc.1`
+7. **Cut the release tag** — `git tag -a v0.1.0-alpha.1 -m "FileFerry v0.1.0-alpha.1"` + `git push origin v0.1.0-alpha.1`
 8. **Link the GHCR package** after the first publish succeeds
    (Package settings → Manage Actions access → link repo with
    Write role)

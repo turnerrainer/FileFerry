@@ -7,9 +7,9 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
-## [0.1.0-rc.1] - 2026-07-29
+## [0.1.0-alpha.1] - 2026-07-29
 
-First release candidate. Rust re-implementation of the JVM-based
+First alpha release. Rust re-implementation of the JVM-based
 [buerokratt/S3-Ferry](https://github.com/buerokratt/S3-Ferry).
 Complete parity with S3-Ferry's HTTP surface — same four
 endpoints, same response envelopes, same path-validation rules,
@@ -112,5 +112,5 @@ same "no nested directories" `list` semantics.
   Cargo.toml, Dockerfile builder tag, and CI matrix all set
   to 1.94. STANDARDS.md §2 records this.
 
-[Unreleased]: https://github.com/turnerrainer/FileFerry/compare/v0.1.0-rc.1...HEAD
-[0.1.0-rc.1]: https://github.com/turnerrainer/FileFerry/releases/tag/v0.1.0-rc.1
+[Unreleased]: https://github.com/turnerrainer/fileferry/compare/v0.1.0-alpha.1...HEAD
+[0.1.0-alpha.1]: https://github.com/turnerrainer/fileferry/releases/tag/v0.1.0-alpha.1

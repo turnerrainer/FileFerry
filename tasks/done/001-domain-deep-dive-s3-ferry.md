@@ -10,10 +10,10 @@ written record of what we're preserving vs changing.
 completed; findings captured in [`../../docs/DESIGN.md`](../../docs/DESIGN.md)
 §§3–7 (surface, preserves, changes, trade-offs). MVP implemented
 against the same commit in the same day — see
-[`../../CHANGELOG.md`](../../CHANGELOG.md) v0.1.0-rc.1.
+[`../../CHANGELOG.md`](../../CHANGELOG.md) v0.1.0-alpha.1.
 
 ## Severity
-High. The whole reason for FileFerry-on-Rust is to preserve the
+High. The whole reason for FileFerry is to preserve the
 S3-Ferry HTTP contract; getting that surface wrong = breaking
 downstream operators who swap their base URL.
 
@@ -41,7 +41,7 @@ plus its `.env` config templates and `Dockerfile`. Produce
   behaviour
 - [x] Every behavioural delta appears in §6 with a reason
 - [x] Every deferred item appears in §7 with a target task ID
-- [x] MVP RC (v0.1.0-rc.1) shipped in the same commit set, per
+- [x] MVP alpha (v0.1.0-alpha.1) shipped in the same commit set, per
   DEV-REQUIREMENTS §11 (every commit references a task file)
 
 ## Estimated effort

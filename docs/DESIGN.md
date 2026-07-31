@@ -102,7 +102,7 @@ exactly what to expect on the wire.
 ## 7. Trade-offs and known limitations
 
 - **S3 upload buffering.** The S3 SDK's `PutObject` requires a
-  length-known body. The 0.1.0-rc.1 impl buffers uploads to a
+  length-known body. The 0.1.0-alpha.1 impl buffers uploads to a
   temp file. This is correct but incurs 2× local disk I/O on the
   writer. Task 002 in the backlog switches to
   `SdkBody::from_body_1_x` for true streaming.
@@ -130,7 +130,7 @@ exactly what to expect on the wire.
   (`gcs-backend`, `azure-backend`, `webdav-backend`). Pluggable
   via `Backends` registry.
 - **v1.0.0** — Public-API-stable release on `main`. Cuts only
-  after downstream integrations have exercised the RC line for
+  after downstream integrations have exercised the alpha line for
   at least one release cycle.
 
 ## 9. Rejected alternatives
@@ -139,8 +139,8 @@ exactly what to expect on the wire.
   breaks the "one build/CI/container toolchain" property of
   the Buerostack Rust family.
 - **Use `aws-sdk-s3::primitives::ByteStream::from_body_1_x`
-  in 0.1.0-rc.1 for streaming upload.** Rejected as scope
-  overreach for the first RC. Feature-parity + hardening first;
+  in 0.1.0-alpha.1 for streaming upload.** Rejected as scope
+  overreach for the first alpha. Feature-parity + hardening first;
   performance optimisation next.
 - **Hide the FS backend behind a feature flag.** Rejected — the
   FS backend is what makes FileFerry a *proxy*; without it there

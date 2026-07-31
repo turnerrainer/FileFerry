@@ -14,7 +14,7 @@ One of:
 ```bash
 docker run -d --name fileferry -p 8080:8080 \
   -v "$PWD/data:/app/data:rw" \
-  turnerrainer/fileferry:rc
+  turnerrainer/fileferry:alpha
 ```
 
 Confirm it's up:
@@ -60,7 +60,7 @@ docker run -d --name fileferry -p 8080:8080 \
   -v "$PWD/fileferry.yaml:/app/fileferry.yaml:ro" \
   -e FILEFERRY_S3_ACCESS_KEY_ID="$MY_ACCESS_KEY" \
   -e FILEFERRY_S3_SECRET_ACCESS_KEY="$MY_SECRET_KEY" \
-  turnerrainer/fileferry:rc
+  turnerrainer/fileferry:alpha
 ```
 
 See [Configuration](./configuration.md) for every field, and
@@ -105,7 +105,7 @@ curl -sX POST http://localhost:8080/v1/files/copy \
 ## 5. Build from source (alternative)
 
 ```bash
-git clone -b dev https://github.com/turnerrainer/FileFerry.git fileferry
+git clone -b dev https://github.com/turnerrainer/fileferry.git fileferry
 cd fileferry
 cargo build --release --bin fileferry
 ./target/release/fileferry

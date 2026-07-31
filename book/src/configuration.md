@@ -20,7 +20,7 @@ file is present but references an env var that isn't set, FileFerry
 # ------------------------------------------------------------------
 port: 8080                        # TCP port to bind
 documentation_enabled: true       # serve GET /api (OpenAPI 3.1)
-cors_origin: ""                   # reserved; not yet enforced (0.1.0-rc.1)
+cors_origin: ""                   # reserved; not yet enforced (0.1.0-alpha.1)
 
 # ------------------------------------------------------------------
 # Local filesystem backend (always enabled)

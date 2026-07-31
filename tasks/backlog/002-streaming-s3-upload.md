@@ -1,7 +1,7 @@
 # 002 — True-streaming S3 upload (no temp file)
 
 ## Filed
-2026-07-29 — deferred from the v0.1.0-rc.1 MVP scope. See
+2026-07-29 — deferred from the v0.1.0-alpha.1 MVP scope. See
 [`../../docs/DESIGN.md`](../../docs/DESIGN.md) §7.
 
 ## Severity
@@ -11,7 +11,7 @@ multi-GB objects on a regular basis.
 
 ## Motivation
 `aws-sdk-s3`'s `PutObject` requires a length-known body. The
-0.1.0-rc.1 `S3Backend::write_all` buffers the reader to a
+0.1.0-alpha.1 `S3Backend::write_all` buffers the reader to a
 `NamedTempFile`, then hands the SDK a `ByteStream::read_from()`
 against the temp file path. Correct but wasteful: every byte
 touches local disk twice (once written by us, once read by

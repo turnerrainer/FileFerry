@@ -8,9 +8,9 @@ src = "src"
 [output.html]
 default-theme = "light"
 preferred-dark-theme = "light"
-git-repository-url = "https://github.com/turnerrainer/FileFerry"
-edit-url-template = "https://github.com/turnerrainer/FileFerry/edit/dev/book/{path}"
-site-url = "/FileFerry/"
+git-repository-url = "https://github.com/turnerrainer/fileferry"
+edit-url-template = "https://github.com/turnerrainer/fileferry/edit/dev/book/{path}"
+site-url = "/fileferry/"
 
 [output.html.search]
 enable = true

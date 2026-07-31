@@ -13,7 +13,7 @@ the parent document wins.
 | Product name      | `FileFerry`                              |
 | Cargo crate name  | `fileferry`                              |
 | Binary name       | `fileferry`                              |
-| GitHub repo       | `github.com/turnerrainer/FileFerry`      |
+| GitHub repo       | `github.com/turnerrainer/fileferry`      |
 | Docker Hub image  | `turnerrainer/fileferry`                 |
 | GHCR image        | `ghcr.io/turnerrainer/fileferry`         |
 | License           | Apache-2.0                               |

@@ -1,12 +1,12 @@
 [package]
 name = "fileferry"
-version = "0.1.0-rc.1"
+version = "0.1.0-alpha.1"
 edition = "2021"
 rust-version = "1.94"
 authors = ["Rainer Türner"]
 license = "Apache-2.0"
 description = "FileFerry — Rust re-implementation of Buerokratt S3-Ferry. Generic file-transfer proxy."
-repository = "https://github.com/turnerrainer/FileFerry"
+repository = "https://github.com/turnerrainer/fileferry"
 
 [dependencies]
 axum = "0.7"

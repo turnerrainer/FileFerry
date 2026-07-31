@@ -1,6 +1,6 @@
 # FileFerry
 
-**Version:** 0.1.0-rc.1 · **License:** Apache-2.0
+**Version:** 0.1.0-alpha.1 · **License:** Apache-2.0
 
 FileFerry is a small HTTP service that brokers file transfers
 between a local filesystem and an S3-compatible object store. It
@@ -22,7 +22,7 @@ Four HTTP endpoints, no more:
 ## One-command demo
 
 ```bash
-docker run -d --name fileferry -p 8080:8080 turnerrainer/fileferry:rc
+docker run -d --name fileferry -p 8080:8080 turnerrainer/fileferry:alpha
 curl -s http://localhost:8080/health
 ```
 
@@ -61,7 +61,7 @@ FileFerry brokers transfers. It does not:
   S3-Ferry's behaviour)
 
 For the exhaustive list see the [FailureModes](./failure-modes.md)
-chapter and the roadmap in [`HANDOFF.md`](https://github.com/turnerrainer/FileFerry/blob/dev/HANDOFF.md).
+chapter and the roadmap in [`HANDOFF.md`](https://github.com/turnerrainer/fileferry/blob/dev/HANDOFF.md).
 
 ## Where to next
 
