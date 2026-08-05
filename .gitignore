@@ -34,3 +34,15 @@ coverage/
 
 # Local runtime data (never commit ingested files)
 /data/
+
+# In-house development artefacts — kept out of the published repo.
+# These live on developer machines and on the internal
+# refacto/compliance-audit branch, not on dev/main. Do NOT `git
+# add` them here without an explicit policy change.
+/REFACTO-COVERAGE.md
+/DIVERGENCES.md
+/MIGRATION.md
+/REFACTO-DEVIATIONS.md
+/HANDOFF.md
+/RESEARCH.md
+/tasks/

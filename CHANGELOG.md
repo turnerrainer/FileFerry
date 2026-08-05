@@ -7,13 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Compat corpus** (`compat/s3-ferry/config/*.env`) — verbatim
+  copies of S3-Ferry's shipped env files, exercised by
+  `tests/compat_corpus.rs` to assert every S3-Ferry field name
+  is on a human-reviewed coverage list before it can pass CI.
+- **Boot diagnostic pass** (`src/diagnose.rs`) — emits
+  `tracing::warn!` at startup for every accepted-but-unwired
+  config field set to a non-default value, naming the field and
+  the intended behaviour. Currently detects `cors_origin`.
+
+### Corrected
+
+- Overclaim in the `[0.1.0-alpha.1]` intro: `POST /v1/files/copy`
+  actually returns `204`, not the `201` S3-Ferry emits — this
+  divergence was not previously documented. See the "Known
+  coverage gaps" section of `[0.1.0-alpha.1]` below.
+
 ## [0.1.0-alpha.1] - 2026-07-31
 
 First alpha release. Rust re-implementation of the JVM-based
 [buerokratt/S3-Ferry](https://github.com/buerokratt/S3-Ferry).
-Complete parity with S3-Ferry's HTTP surface — same four
-endpoints, same response envelopes, same path-validation rules,
-same "no nested directories" `list` semantics.
+Preserves S3-Ferry's HTTP surface (same four endpoints, same
+response envelopes on the happy path, same path-validation rules,
+same "no nested directories" `list` semantics), with the
+divergences listed in the "Known coverage gaps" subsection
+below.
 
 ### Added — HTTP surface
 
@@ -101,9 +121,6 @@ same "no nested directories" `list` semantics.
   abstraction pattern, size-cap semantics)
 - `SECURITY.md` — private disclosure recipe, response SLA,
   supported versions, CI supply-chain posture inventory
-- `HANDOFF.md` — entry point for the next contributor
-- `tasks/backlog/001-domain-deep-dive-s3-ferry.md` — first
-  task, marked landed on this release
 
 ### Deviations from DEV-REQUIREMENTS
 
@@ -111,6 +128,55 @@ same "no nested directories" `list` semantics.
   1.140 and its transitive `aws-*` deps require `rustc >= 1.94.1`.
   Cargo.toml, Dockerfile builder tag, and CI matrix all set
   to 1.94. STANDARDS.md §2 records this.
+
+### Known coverage gaps
+
+Pre-release; ships with the following known gaps against S3-Ferry
+parity. Consumers running FileFerry against an S3-Ferry-derived
+client should know what is and isn't reproduced:
+
+- **`cors_origin` accepted but not enforced.** The field parses at
+  boot but no `CorsLayer` is mounted; responses carry no CORS
+  headers. Operators depending on CORS must front FileFerry with
+  a CORS-aware reverse proxy until `v0.1.0-alpha.2`. The boot
+  diagnostic warns when a non-default `cors_origin` is set.
+- **`POST /v1/files/copy` returns `204`, not `201`.** Any client
+  asserting `status === 201` must accept `204` instead.
+- **Error response body shape changed.** In-handler errors emit
+  `{"error": "<code>", "message": "<text>"}` — different from
+  NestJS's `{"message": ..., "error": ..., "statusCode": ...}`.
+  Framework-level rejections (JSON parse, query parse, `404`
+  for unknown paths, `405` for wrong methods, `415` for wrong
+  `Content-Type`) emit axum's default plain-text or empty
+  bodies, not the FileFerry shape.
+- **`lastModified` timestamp precision.** S3-Ferry emits
+  `YYYY-MM-DDTHH:MM:SS.mmmZ` (milliseconds); FileFerry emits
+  `YYYY-MM-DDTHH:MM:SSZ` (seconds).
+- **Wrong HTTP method on a known path** returns
+  `405 Method Not Allowed` with an `allow:` header, not
+  S3-Ferry's `404 Cannot X /path`.
+- **Log-string parity broken.** Structured `tracing` output
+  replaces S3-Ferry's `Request: {…}` / `Response: {…}` /
+  `Listing files failed: <stack>` / `Copying files failed:
+  <stack>` literals. Log-grep patterns must migrate to
+  field matching.
+- **S3 listing uses `bucket_path` as prefix.** Diverges from
+  S3-Ferry, which ignores `S3_DATA_BUCKET_PATH` on list. The
+  FileFerry behaviour matches copy semantics (writes and lists
+  scoped by the same prefix).
+- **S3 upload buffers to a temp file.** Streaming regression:
+  aws-sdk-s3 1.x rejects unsized bodies, so a `NamedTempFile`
+  is used to supply a known `Content-Length`. Operators
+  uploading multi-GiB files need `TMPDIR` on real disk.
+  True streaming is planned for `v0.2.0`.
+- **No cross-implementation reproduction fixtures.** Behavioural
+  claims are verified by code-read and by the FileFerry test
+  set only; no S3-Ferry-vs-FileFerry side-by-side fixture is
+  run in CI. LocalStack-based comparison is planned for
+  `v0.1.0-alpha.2`.
+- **Unknown-field tolerance on JSON bodies.** Matches S3-Ferry's
+  silent-accept behaviour for the alpha window; will tighten
+  to `400` with a specific error code in `v0.2.0`.
 
 [Unreleased]: https://github.com/turnerrainer/fileferry/compare/v0.1.0-alpha.1...HEAD
 [0.1.0-alpha.1]: https://github.com/turnerrainer/fileferry/releases/tag/v0.1.0-alpha.1

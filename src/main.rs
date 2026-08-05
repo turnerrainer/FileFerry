@@ -9,6 +9,7 @@ use fileferry::backend::fs::FsBackend;
 use fileferry::backend::s3::S3Backend;
 use fileferry::backend::{BackendRef, Backends};
 use fileferry::config;
+use fileferry::diagnose;
 use fileferry::router::{build_router, AppState};
 
 #[tokio::main]
@@ -25,6 +26,10 @@ async fn main() -> anyhow::Result<()> {
         s3_enabled = cfg.s3.is_some(),
         "starting FileFerry"
     );
+
+    // Boot-time diagnostic pass — warn on any accepted-but-unwired
+    // field set to a non-default value.
+    diagnose::diagnose(&cfg);
 
     let fs_backend: BackendRef =
         Arc::new(FsBackend::new(&cfg.fs).context("initialising FS backend")?);
