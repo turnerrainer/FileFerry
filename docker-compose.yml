@@ -5,7 +5,7 @@ services:
     build:
       context: .
       dockerfile: Dockerfile
-    image: fileferry:0.1.0-alpha.1
+    image: fileferry:0.1.0-alpha.2
     container_name: fileferry
     ports:
       - "8080:8080"

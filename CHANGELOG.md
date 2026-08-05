@@ -7,23 +7,33 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.0-alpha.2] - 2026-08-05
+
+Second alpha. Additive-only over `0.1.0-alpha.1`; no runtime
+behaviour change beyond the boot diagnostic WARN line described
+below. Existing `0.1.0-alpha.1` images and configs remain valid.
+
 ### Added
 
 - **Compat corpus** (`compat/s3-ferry/config/*.env`) — verbatim
   copies of S3-Ferry's shipped env files, exercised by
   `tests/compat_corpus.rs` to assert every S3-Ferry field name
   is on a human-reviewed coverage list before it can pass CI.
+  A new upstream field will fail CI until a human reviews it
+  against the FileFerry target contract.
 - **Boot diagnostic pass** (`src/diagnose.rs`) — emits
   `tracing::warn!` at startup for every accepted-but-unwired
-  config field set to a non-default value, naming the field and
-  the intended behaviour. Currently detects `cors_origin`.
+  config field set to a non-default value, naming the field
+  and the planned release when it will become active. Currently
+  detects `cors_origin`.
 
 ### Corrected
 
 - Overclaim in the `[0.1.0-alpha.1]` intro: `POST /v1/files/copy`
   actually returns `204`, not the `201` S3-Ferry emits — this
   divergence was not previously documented. See the "Known
-  coverage gaps" section of `[0.1.0-alpha.1]` below.
+  coverage gaps" section of `[0.1.0-alpha.1]` below (all still
+  apply to `0.1.0-alpha.2` — no gaps have been closed yet).
 
 ## [0.1.0-alpha.1] - 2026-07-31
 
@@ -138,8 +148,9 @@ client should know what is and isn't reproduced:
 - **`cors_origin` accepted but not enforced.** The field parses at
   boot but no `CorsLayer` is mounted; responses carry no CORS
   headers. Operators depending on CORS must front FileFerry with
-  a CORS-aware reverse proxy until `v0.1.0-alpha.2`. The boot
-  diagnostic warns when a non-default `cors_origin` is set.
+  a CORS-aware reverse proxy until enforcement lands in a later
+  release. The boot diagnostic warns when a non-default
+  `cors_origin` is set.
 - **`POST /v1/files/copy` returns `204`, not `201`.** Any client
   asserting `status === 201` must accept `204` instead.
 - **Error response body shape changed.** In-handler errors emit
@@ -172,11 +183,12 @@ client should know what is and isn't reproduced:
 - **No cross-implementation reproduction fixtures.** Behavioural
   claims are verified by code-read and by the FileFerry test
   set only; no S3-Ferry-vs-FileFerry side-by-side fixture is
-  run in CI. LocalStack-based comparison is planned for
-  `v0.1.0-alpha.2`.
+  run in CI. A LocalStack-based comparison job is planned for
+  a later release.
 - **Unknown-field tolerance on JSON bodies.** Matches S3-Ferry's
   silent-accept behaviour for the alpha window; will tighten
   to `400` with a specific error code in `v0.2.0`.
 
-[Unreleased]: https://github.com/turnerrainer/fileferry/compare/v0.1.0-alpha.1...HEAD
+[Unreleased]: https://github.com/turnerrainer/fileferry/compare/v0.1.0-alpha.2...HEAD
+[0.1.0-alpha.2]: https://github.com/turnerrainer/fileferry/releases/tag/v0.1.0-alpha.2
 [0.1.0-alpha.1]: https://github.com/turnerrainer/fileferry/releases/tag/v0.1.0-alpha.1
