@@ -10,4 +10,18 @@
 # this file. See DEV-REQUIREMENTS §5.1.
 
 [advisories]
-ignore = []
+ignore = [
+    # RUSTSEC-2026-0253 — `lru` 0.16.4, "unsound" (informational),
+    # potential use-after-free in `LruCache::pop()` if a stored key's
+    # `Drop` panics while unwinding is enabled. Fixed in lru 0.18.2.
+    #
+    # Reached transitively via aws-sdk-s3 → lru "^0.16" (see
+    # `cargo tree -i lru`). aws-sdk-s3 has not yet moved to lru 0.18,
+    # and the semver bump prevents a `[patch.crates-io]` override.
+    # FileFerry never touches this LruCache directly and stores no
+    # panic-on-Drop key types in it, so the unsound path is not
+    # reachable in practice.
+    # Review: 2026-08-18. Re-check when aws-sdk-s3 bumps its `lru`
+    # constraint or when a semver-compatible 0.16.x fix ships.
+    "RUSTSEC-2026-0253",
+]
