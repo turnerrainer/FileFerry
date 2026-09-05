@@ -38,12 +38,25 @@ pub struct ListFilesResponse {
 #[derive(Debug, Serialize)]
 pub struct ListFilesMeta {
     pub count: usize,
+    /// F4: when the page is full (`count == limit`), the client should
+    /// request `?startAfter={nextCursor}` to fetch the next page. Absent
+    /// when the response contains the tail of the listing.
+    #[serde(rename = "nextCursor", skip_serializing_if = "Option::is_none")]
+    pub next_cursor: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]
 pub struct ListFilesQuery {
     #[serde(rename = "type")]
     pub storage_type: StorageType,
+    /// F4: cap results per request. Absent = server default
+    /// (`DEFAULT_LIST_LIMIT`); values above `MAX_LIST_LIMIT` are 413.
+    #[serde(default)]
+    pub limit: Option<usize>,
+    /// F4: pagination cursor. Returns entries whose name is strictly
+    /// greater than this string. Uses the S3 `start-after` convention.
+    #[serde(default, rename = "startAfter")]
+    pub start_after: Option<String>,
 }
 
 #[derive(Debug, Deserialize)]

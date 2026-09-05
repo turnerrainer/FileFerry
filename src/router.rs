@@ -12,7 +12,7 @@ use tower::ServiceBuilder;
 use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::trace::TraceLayer;
 
-use crate::backend::{stream_copy, Backends};
+use crate::backend::{stream_copy, Backends, ListOptions, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT};
 use crate::config::AppConfig;
 use crate::error::FerryError;
 use crate::model::{CopyFileRequest, ListFilesMeta, ListFilesQuery, ListFilesResponse};
@@ -86,11 +86,18 @@ async fn openapi(State(state): State<AppState>) -> impl IntoResponse {
             "/v1/files": {
                 "get": {
                     "summary": "List root-level files in a backend",
-                    "parameters": [{
-                        "name": "type", "in": "query", "required": true,
-                        "schema": {"type": "string", "enum": ["FS","S3"]}
-                    }],
-                    "responses": {"200":{"description":"file list"}}
+                    "parameters": [
+                        {"name":"type","in":"query","required":true,
+                         "schema":{"type":"string","enum":["FS","S3"]}},
+                        {"name":"limit","in":"query","required":false,
+                         "schema":{"type":"integer","minimum":1,"maximum":MAX_LIST_LIMIT}},
+                        {"name":"startAfter","in":"query","required":false,
+                         "schema":{"type":"string"}}
+                    ],
+                    "responses": {
+                        "200":{"description":"file list (see meta.nextCursor for pagination)"},
+                        "413":{"description":"limit exceeds server cap"}
+                    }
                 }
             },
             "/v1/files/copy": {
@@ -127,11 +134,43 @@ async fn list_files(
     Query(q): Query<ListFilesQuery>,
 ) -> Result<Json<ListFilesResponse>, FerryError> {
     let backend = state.backends.pick(q.storage_type)?;
-    let files = backend.list().await?;
+    // F4: cap the client-requested `limit`. Values above MAX_LIST_LIMIT
+    // are refused before we touch the backend so a caller can't ask us
+    // to allocate an unbounded response. Zero is coerced to the default
+    // to avoid a "silently return no results" footgun.
+    let limit = match q.limit {
+        Some(0) | None => DEFAULT_LIST_LIMIT,
+        Some(n) if n > MAX_LIST_LIMIT => {
+            return Err(FerryError::ListLimitTooLarge {
+                cap: MAX_LIST_LIMIT,
+            });
+        }
+        Some(n) => n,
+    };
+    // F4: sanity-check `startAfter` against the same validator we use
+    // for copy paths — no null bytes, no traversal fragments, no
+    // exotic charset. Prevents a caller from smuggling weird input
+    // into the S3 list request.
+    if let Some(cursor) = q.start_after.as_deref() {
+        validate_path(cursor)?;
+    }
+    let files = backend
+        .list(ListOptions {
+            limit: Some(limit),
+            start_after: q.start_after.clone(),
+        })
+        .await?;
     let count = files.len();
+    // F4: emit a cursor only when the page filled up — a short page
+    // signals the tail of the listing.
+    let next_cursor = if count == limit {
+        files.last().map(|e| e.name.clone())
+    } else {
+        None
+    };
     Ok(Json(ListFilesResponse {
         data: files,
-        meta: ListFilesMeta { count },
+        meta: ListFilesMeta { count, next_cursor },
     }))
 }
 
@@ -154,6 +193,7 @@ async fn copy_file(
         dst,
         &req.destination_file_path,
         state.config.limits.max_response_bytes,
+        Duration::from_secs(state.config.limits.copy_inactivity_secs),
     )
     .await?;
 

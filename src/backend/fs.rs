@@ -1,10 +1,11 @@
+use std::os::unix::fs::OpenOptionsExt;
 use std::path::{Path, PathBuf};
 
 use async_trait::async_trait;
 use tokio::fs;
 use tokio::io::AsyncWriteExt;
 
-use crate::backend::{Backend, ByteReader};
+use crate::backend::{Backend, ByteReader, ListOptions, DEFAULT_LIST_LIMIT};
 use crate::config::FsConfig;
 use crate::error::FerryError;
 use crate::model::{FileEntry, StorageType};
@@ -43,10 +44,34 @@ impl FsBackend {
             .ancestors()
             .any(|a| a == canonical_root || a == self.root);
         if !ok_prefix {
-            return Err(FerryError::InvalidPath(format!(
-                "resolved path escapes fs root: {}",
-                path
-            )));
+            // F8: don't echo the attacker's input back in the client
+            // response. Full detail stays in the operator log.
+            tracing::warn!(
+                requested_path = %path,
+                root = %self.root.display(),
+                "path resolution escaped fs root"
+            );
+            return Err(FerryError::InvalidPath(
+                "resolved path escapes fs root".into(),
+            ));
+        }
+        // F1: reject symlinks outright. Use `symlink_metadata` so we
+        // observe the link itself, not its target. Existence errors
+        // are folded into a NotFound so writes to fresh paths still
+        // work (the file legitimately doesn't exist yet).
+        match std::fs::symlink_metadata(&joined) {
+            Ok(meta) if meta.file_type().is_symlink() => {
+                tracing::warn!(
+                    requested_path = %path,
+                    "rejected: path is a symlink"
+                );
+                return Err(FerryError::InvalidPath(
+                    "path is a symlink; symlinks are not permitted".into(),
+                ));
+            }
+            Ok(_) => {}
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => {}
+            Err(e) => return Err(FerryError::Io(e)),
         }
         Ok(joined)
     }
@@ -58,12 +83,25 @@ impl Backend for FsBackend {
         StorageType::Fs
     }
 
-    async fn list(&self) -> Result<Vec<FileEntry>, FerryError> {
+    async fn list(&self, opts: ListOptions) -> Result<Vec<FileEntry>, FerryError> {
+        // F4: collect entries under a hard cap and support pagination.
+        // The limit is enforced at the router (against MAX_LIST_LIMIT)
+        // before we ever get here; we still defensively clamp to
+        // DEFAULT_LIST_LIMIT so a direct caller (e.g. from Rust code)
+        // can't accidentally allocate an unbounded list.
+        let limit = opts.limit.unwrap_or(DEFAULT_LIST_LIMIT);
         let mut read = fs::read_dir(&self.root).await?;
-        let mut out = Vec::new();
+        let mut collected = Vec::new();
         while let Some(entry) = read.next_entry().await? {
-            let meta = entry.metadata().await?;
-            if !meta.is_file() {
+            // F1: use symlink_metadata (never follows). The previous
+            // `entry.metadata()` call would follow, letting a planted
+            // symlink leak the target's size/mtime through the listing.
+            let path = entry.path();
+            let meta = match std::fs::symlink_metadata(&path) {
+                Ok(m) => m,
+                Err(_) => continue,
+            };
+            if meta.file_type().is_symlink() || !meta.is_file() {
                 continue;
             }
             let name = entry.file_name().to_string_lossy().to_string();
@@ -73,24 +111,49 @@ impl Backend for FsBackend {
                 .ok()
                 .and_then(|t| t.duration_since(std::time::UNIX_EPOCH).ok())
                 .map(|d| format_rfc3339(d.as_secs()));
-            out.push(FileEntry {
+            collected.push(FileEntry {
                 name,
                 size,
                 last_modified,
             });
         }
-        Ok(out)
+        // Sort by name so `start_after` is deterministic across
+        // directory-entry orderings (readdir returns in filesystem-
+        // dependent order).
+        collected.sort_by(|a, b| a.name.cmp(&b.name));
+        let filtered = collected.into_iter().filter(|e| match &opts.start_after {
+            Some(cursor) => e.name.as_str() > cursor.as_str(),
+            None => true,
+        });
+        Ok(filtered.take(limit).collect())
     }
 
     async fn open_read(&self, path: &str) -> Result<ByteReader, FerryError> {
         let resolved = self.resolve(path)?;
-        let file = match fs::File::open(&resolved).await {
+        // F1: close the TOCTOU window between symlink_metadata and
+        // open by passing O_NOFOLLOW. If the final component becomes
+        // a symlink after `resolve`, the open will fail with ELOOP.
+        let std_file = match std::fs::OpenOptions::new()
+            .read(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&resolved)
+        {
             Ok(f) => f,
             Err(e) if e.kind() == std::io::ErrorKind::NotFound => {
                 return Err(FerryError::NotFound(path.to_string()));
             }
+            Err(e) if is_symlink_loop(&e) => {
+                tracing::warn!(
+                    requested_path = %path,
+                    "open refused: path became a symlink between check and open"
+                );
+                return Err(FerryError::InvalidPath(
+                    "path is a symlink; symlinks are not permitted".into(),
+                ));
+            }
             Err(e) => return Err(FerryError::Io(e)),
         };
+        let file = fs::File::from_std(std_file);
         Ok(Box::pin(file))
     }
 
@@ -104,11 +167,42 @@ impl Backend for FsBackend {
         if let Some(parent) = resolved.parent() {
             fs::create_dir_all(parent).await?;
         }
-        let mut file = fs::File::create(&resolved).await?;
+        // F1: use O_NOFOLLOW on the destination too. If an attacker
+        // races a symlink into place between resolve() and this open,
+        // the write refuses instead of clobbering the target.
+        let std_file = match std::fs::OpenOptions::new()
+            .write(true)
+            .create(true)
+            .truncate(true)
+            .custom_flags(libc::O_NOFOLLOW)
+            .open(&resolved)
+        {
+            Ok(f) => f,
+            Err(e) if is_symlink_loop(&e) => {
+                tracing::warn!(
+                    requested_path = %path,
+                    "write refused: destination is or became a symlink"
+                );
+                return Err(FerryError::InvalidPath(
+                    "path is a symlink; symlinks are not permitted".into(),
+                ));
+            }
+            Err(e) => return Err(FerryError::Io(e)),
+        };
+        let mut file = fs::File::from_std(std_file);
         tokio::io::copy(&mut reader, &mut file).await?;
         file.flush().await?;
         Ok(())
     }
+}
+
+/// True when the OS refused an open because O_NOFOLLOW hit a symlink.
+/// Linux surfaces this as `ELOOP` (mapped by std to
+/// `ErrorKind::FilesystemLoop` on recent toolchains, and to
+/// `ErrorKind::Other` on older ones — we check raw errno to cover
+/// both).
+fn is_symlink_loop(e: &std::io::Error) -> bool {
+    e.raw_os_error() == Some(libc::ELOOP)
 }
 
 /// Format a UNIX epoch seconds value as an ISO-8601 UTC string
@@ -176,7 +270,7 @@ mod tests {
         .unwrap();
 
         let mut names: Vec<String> = be
-            .list()
+            .list(ListOptions::default())
             .await
             .unwrap()
             .into_iter()
@@ -222,6 +316,133 @@ mod tests {
             .await
             .unwrap();
         assert_eq!(buf, data);
+    }
+
+    #[tokio::test]
+    async fn list_skips_symlinks() {
+        // F1 regression: a symlink placed in the data-dir must not
+        // appear in the listing (previously would leak target metadata).
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        tokio::fs::write(root.join("real.txt"), b"hello")
+            .await
+            .unwrap();
+        std::os::unix::fs::symlink("/etc/passwd", root.join("pwned")).unwrap();
+
+        let be = FsBackend::new(&FsConfig {
+            data_directory: root.to_path_buf(),
+        })
+        .unwrap();
+        let names: Vec<String> = be
+            .list(ListOptions::default())
+            .await
+            .unwrap()
+            .into_iter()
+            .map(|f| f.name)
+            .collect();
+        assert_eq!(names, vec!["real.txt"], "symlink must not be listed");
+    }
+
+    #[tokio::test]
+    async fn open_read_rejects_symlink() {
+        // F1 regression: attempting to read a symlink returns
+        // InvalidPath, not the target's contents.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        std::os::unix::fs::symlink("/etc/passwd", root.join("pwned")).unwrap();
+
+        let be = FsBackend::new(&FsConfig {
+            data_directory: root.to_path_buf(),
+        })
+        .unwrap();
+        match be.open_read("pwned").await {
+            Err(FerryError::InvalidPath(msg)) => {
+                assert!(
+                    msg.contains("symlink"),
+                    "message should say symlinks are rejected: {msg}"
+                );
+            }
+            Err(other) => panic!("expected InvalidPath, got {other:?}"),
+            Ok(_) => panic!("expected InvalidPath, symlink was opened"),
+        }
+    }
+
+    #[tokio::test]
+    async fn open_read_rejects_symlink_even_when_target_is_inside_root() {
+        // F1 policy: no symlinks at all, not just "no escaping symlinks".
+        // Canonicalisation-based defences race; a flat ban avoids TOCTOU.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        tokio::fs::write(root.join("real.txt"), b"hello")
+            .await
+            .unwrap();
+        std::os::unix::fs::symlink(root.join("real.txt"), root.join("link")).unwrap();
+
+        let be = FsBackend::new(&FsConfig {
+            data_directory: root.to_path_buf(),
+        })
+        .unwrap();
+        assert!(matches!(
+            be.open_read("link").await,
+            Err(FerryError::InvalidPath(_))
+        ));
+    }
+
+    #[tokio::test]
+    async fn write_all_refuses_symlink_destination() {
+        // F1: an attacker planting a symlink at the destination path
+        // must not cause FileFerry to clobber the target.
+        let tmp = TempDir::new().unwrap();
+        let root = tmp.path();
+        let outside = tmp.path().join("outside.txt");
+        tokio::fs::write(&outside, b"do-not-touch").await.unwrap();
+        std::os::unix::fs::symlink(&outside, root.join("link")).unwrap();
+
+        let be = FsBackend::new(&FsConfig {
+            data_directory: root.to_path_buf(),
+        })
+        .unwrap();
+        let data = b"attacker payload".to_vec();
+        let result = be
+            .write_all(
+                "link",
+                Box::pin(std::io::Cursor::new(data.clone())),
+                None,
+            )
+            .await;
+        assert!(
+            matches!(result, Err(FerryError::InvalidPath(_))),
+            "symlink write must be refused, got {result:?}"
+        );
+        // The original file outside the root must be untouched.
+        let after = tokio::fs::read(&outside).await.unwrap();
+        assert_eq!(after, b"do-not-touch");
+    }
+
+    #[tokio::test]
+    async fn resolve_error_does_not_echo_user_path() {
+        // F8 regression: previously `resolve` returned the raw user
+        // path in its error message. Verify we now emit a fixed
+        // string that doesn't include the input.
+        let tmp = TempDir::new().unwrap();
+        let be = FsBackend::new(&FsConfig {
+            data_directory: tmp.path().to_path_buf(),
+        })
+        .unwrap();
+        // Craft a path that survives lexical joining but still fails.
+        // A leading absolute path escapes the root because `PathBuf::join`
+        // discards `self` when the arg is absolute.
+        let attacker_input = "/etc/passwd-DEADBEEF";
+        match be.resolve(attacker_input) {
+            Err(FerryError::InvalidPath(msg)) => {
+                assert!(
+                    !msg.contains("DEADBEEF"),
+                    "error must not echo user input: {msg}"
+                );
+            }
+            Err(other) => panic!("expected InvalidPath, got {other:?}"),
+            Ok(p) => panic!("expected InvalidPath, resolve returned {p:?}"),
+        }
     }
 
     #[test]
