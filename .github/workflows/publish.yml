@@ -1,17 +1,27 @@
 name: Publish container image
 
-# Trigger on release tag push OR manual dispatch.
+# Trigger on release tag push OR manual dispatch. In both cases the
+# publish job runs inside the `production` GitHub Environment, which
+# is configured with required reviewers — no image is pushed to
+# GHCR / Docker Hub without an explicit human approval in the
+# Actions UI, even if a tag is created by accident.
+#
+# Alpha versioning: PATCH-as-alpha-counter with a bare `-alpha`
+# suffix (0.1.1-alpha, 0.1.2-alpha, 0.1.3-alpha, ...). See
+# CHANGELOG.md for the mapping from the old `-alpha.N` form.
 #
 # Tag-push (the normal path):
-#   v0.1.0         → stable release
-#   v0.1.0-alpha.1 → pre-release (alpha / beta / rc / preview / any suffix)
+#   v0.1.0        → stable release
+#   v0.1.3-alpha  → pre-release (alpha / beta / rc / preview /
+#                   any SemVer pre-release identifier)
 # The `derive version tags` step below reads which shape was pushed
 # and chooses whether to move :latest and :major.minor accordingly.
 #
 # workflow_dispatch (the escape hatch):
-#   Lets an operator re-run the publish workflow against an existing
+#   Lets a maintainer re-run the publish workflow against an existing
 #   tag from the Actions UI without cutting a new tag. Useful when
-#   the workflow itself has a config bug.
+#   the workflow itself has a config bug. Still gated by the
+#   `production` environment reviewer.
 on:
   push:
     tags:
@@ -20,7 +30,7 @@ on:
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to publish (e.g. v0.1.0-alpha.1). Must already exist on the repo."
+        description: "Existing tag to publish (e.g. v0.1.3-alpha). Must already exist on the repo."
         required: true
         type: string
 
@@ -37,6 +47,15 @@ permissions:
 jobs:
   publish:
     runs-on: ubuntu-latest
+    # Required reviewers on the `production` environment enforce the
+    # release policy: no deploy without a human approval in the
+    # Actions UI. Configure in repo settings → Environments →
+    # production → "Required reviewers". Without this environment
+    # configured, the job pauses on "Waiting for review" — that's
+    # the intended behaviour, not a bug.
+    environment:
+      name: production
+      url: https://github.com/turnerrainer/fileferry/pkgs/container/fileferry
     steps:
       - name: Checkout
         uses: actions/checkout@v5
@@ -47,8 +66,8 @@ jobs:
       # Derive the tag list. Two paths:
       #   * Stable release (`v0.1.0`):
       #       → push :0.1.0, :0.1, :latest
-      #   * Pre-release  (`v0.1.0-alpha.1`, `v0.2.0-beta.1`, ...):
-      #       → push :0.1.0-alpha.1 AND :<suffix-type> (e.g. :alpha,
+      #   * Pre-release  (`v0.1.3-alpha`, `v0.2.0-beta.1`, ...):
+      #       → push :0.1.3-alpha AND :<suffix-type> (e.g. :alpha,
       #         :beta, :rc). Never move :latest or :0.1 from a pre-
       #         release — those are the implicit-trust tags.
       - name: Compose image tags
