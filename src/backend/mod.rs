@@ -252,16 +252,10 @@ mod tests {
             fn kind(&self) -> StorageType {
                 StorageType::Fs
             }
-            async fn list(
-                &self,
-                _opts: ListOptions,
-            ) -> Result<Vec<FileEntry>, FerryError> {
+            async fn list(&self, _opts: ListOptions) -> Result<Vec<FileEntry>, FerryError> {
                 Ok(Vec::new())
             }
-            async fn open_read(
-                &self,
-                _path: &str,
-            ) -> Result<ByteReader, FerryError> {
+            async fn open_read(&self, _path: &str) -> Result<ByteReader, FerryError> {
                 Ok(Box::pin(StallReader))
             }
             async fn write_all(
@@ -280,16 +274,10 @@ mod tests {
             fn kind(&self) -> StorageType {
                 StorageType::S3
             }
-            async fn list(
-                &self,
-                _opts: ListOptions,
-            ) -> Result<Vec<FileEntry>, FerryError> {
+            async fn list(&self, _opts: ListOptions) -> Result<Vec<FileEntry>, FerryError> {
                 Ok(Vec::new())
             }
-            async fn open_read(
-                &self,
-                _path: &str,
-            ) -> Result<ByteReader, FerryError> {
+            async fn open_read(&self, _path: &str) -> Result<ByteReader, FerryError> {
                 unreachable!();
             }
             async fn write_all(

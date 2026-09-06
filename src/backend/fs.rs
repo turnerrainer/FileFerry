@@ -404,11 +404,7 @@ mod tests {
         .unwrap();
         let data = b"attacker payload".to_vec();
         let result = be
-            .write_all(
-                "link",
-                Box::pin(std::io::Cursor::new(data.clone())),
-                None,
-            )
+            .write_all("link", Box::pin(std::io::Cursor::new(data.clone())), None)
             .await;
         assert!(
             matches!(result, Err(FerryError::InvalidPath(_))),
