@@ -7,6 +7,81 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.1.3-alpha] - 2026-09-06
+
+Third alpha. Security hardening pass driven by the h2ck.me v1
+audit (`AUDIT.md`, `FIX-KIT.md`). Ships fixes for the two
+CRITICAL, two HIGH and two MEDIUM findings, all LOW findings, and
+documents the remaining operational posture. Versioning switches
+to `MAJOR.MINOR.PATCH-alpha` (bare `-alpha` suffix); this release
+supersedes `0.1.0-alpha.2`.
+
+### Security
+
+- **F1 — FS-backend symlink escape (CRITICAL).** `resolve()` now
+  rejects any path whose final component is a symlink (flat
+  policy, no in-root carve-out). `open_read` and `write_all` open
+  files with `O_NOFOLLOW`, closing the TOCTOU window between the
+  pre-check and the open. `list()` uses `symlink_metadata()` so
+  planted symlinks no longer leak their target's size / mtime.
+- **F2 — `S3Config` derived Debug leaked credentials (CRITICAL).**
+  Replaced with a hand-written `impl fmt::Debug` that renders
+  `access_key_id` and `secret_access_key` as `***REDACTED***`.
+  `{:?}` on `AppConfig` inherits the masked inner impl.
+- **F3 — Slow-drip transfer DoS (HIGH).** `stream_copy` wraps the
+  source reader in a per-poll `TimeoutReader` gated by
+  `limits.copy_inactivity_secs` (default 30). Stalled peers now
+  abort within the budget instead of holding a request slot for
+  the full `request_timeout_secs`.
+- **F4 — Unpaginated list DoS (HIGH).** `GET /v1/files` accepts
+  `?limit=` (default 1 000, cap 10 000, over-cap → 413) and
+  `?startAfter=<name>`. Responses gain `meta.nextCursor` when a
+  page is full. The FS backend sorts by name for stable
+  pagination; the S3 backend uses server-side continuation
+  tokens. `startAfter` is validated the same way as file paths.
+- **F5 — `bucket_path` traversal (MEDIUM).** Values containing
+  `..` or a leading `/` fail the boot validation with a named
+  error before the server binds.
+- **F6 — `cors_origin` was parsed but unimplemented (MEDIUM).**
+  Setting a non-empty value is now a hard boot failure. Terminate
+  CORS at a reverse proxy; full CORS wiring will land in a later
+  release with a proper config surface.
+- **F8 — Error echoed user-supplied path (LOW).** The escape
+  branch of `resolve()` returns a fixed string
+  (`resolved path escapes fs root`). The full input is still
+  logged via `tracing::warn!` for operator debugging.
+- **F7 / F9 / F10 — Documented posture.** F7 (response-cap /
+  compressed bytes) is a preserved invariant — FileFerry does not
+  enable transparent decompression on any HTTP client. F9 (S3
+  tempfile in shared `$TMPDIR`) is mitigated by the shipped
+  compose file's private `/tmp`; chunked `PutObject` is v0.2
+  backlog. F10 (circular-symlink DoS) is mooted by F1.
+
+### Changed
+
+- **Versioning scheme.** Alphas now increment the PATCH digit
+  with a bare `-alpha` suffix (`0.1.1-alpha`, `0.1.2-alpha`,
+  `0.1.3-alpha`, ...) instead of the `-alpha.N` dot-counter form.
+  `0.1.0-alpha.2` corresponds to what the new scheme would call
+  `0.1.2-alpha`; the next release is `0.1.3-alpha`.
+- **Publish workflow.** `publish.yml` now runs under the
+  `production` GitHub Environment. A maintainer must approve the
+  deploy in the Actions UI before images are pushed and signed.
+  Tag push alone no longer ships an image.
+- **`Backend::list` signature.** Takes a `ListOptions { limit,
+  start_after }`. Custom `Backend` implementations outside this
+  repo must update to match.
+
+### Added
+
+- `SECURITY.md` gained an "Operational hardening notes" section
+  covering the symlink policy, credential redaction, slow-drip
+  timeout, pagination caps, `bucket_path` validation, CORS
+  posture, tempfile / `$TMPDIR` posture, and the wire-bytes-cap
+  invariant.
+- Regression tests for every finding above (see `tests/` and
+  `src/backend/*.rs`).
+
 ## [0.1.0-alpha.2] - 2026-08-05
 
 Second alpha. Additive-only over `0.1.0-alpha.1`; no runtime
@@ -189,6 +264,7 @@ client should know what is and isn't reproduced:
   silent-accept behaviour for the alpha window; will tighten
   to `400` with a specific error code in `v0.2.0`.
 
-[Unreleased]: https://github.com/turnerrainer/fileferry/compare/v0.1.0-alpha.2...HEAD
+[Unreleased]: https://github.com/turnerrainer/fileferry/compare/v0.1.3-alpha...HEAD
+[0.1.3-alpha]: https://github.com/turnerrainer/fileferry/releases/tag/v0.1.3-alpha
 [0.1.0-alpha.2]: https://github.com/turnerrainer/fileferry/releases/tag/v0.1.0-alpha.2
 [0.1.0-alpha.1]: https://github.com/turnerrainer/fileferry/releases/tag/v0.1.0-alpha.1

@@ -3,7 +3,7 @@
 A small HTTP file-transfer proxy. Rust re-implementation of
 [buerokratt/S3-Ferry](https://github.com/buerokratt/S3-Ferry).
 
-**Version:** 0.1.0-alpha.2 · **License:** Apache-2.0
+**Version:** 0.1.3-alpha · **License:** Apache-2.0
 · **Docs:** [turnerrainer.github.io/fileferry](https://turnerrainer.github.io/fileferry/)
 · **Images:** `docker.io/turnerrainer/fileferry:alpha`, `ghcr.io/turnerrainer/fileferry:alpha`
 
