@@ -45,6 +45,17 @@ bytes = "1"
 # aws-sdk-s3 a length-known ByteStream. See src/backend/s3.rs.
 tempfile = "3"
 
+# F3: per-poll inactivity guard on the source reader used by
+# `stream_copy`. Protects against slow-drip DoS where a peer
+# returns 1 byte/minute — total-request timeout would keep resetting.
+tokio-io-timeout = "1.2"
+
+# `libc::O_NOFOLLOW` for the FS backend's open path — closes the
+# TOCTOU window between the symlink pre-check and the actual open.
+# FileFerry is a Linux-only deployment target (Dockerfile is
+# debian-slim), so libc is unconditional.
+libc = "0.2"
+
 [dev-dependencies]
 tower = { version = "0.4", features = ["util"] }
 

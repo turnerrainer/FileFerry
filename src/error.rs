@@ -21,6 +21,10 @@ pub enum FerryError {
     #[error("transfer exceeded configured size cap of {cap} bytes")]
     TransferTooLarge { cap: u64 },
 
+    /// F4: caller asked for a list page larger than the server allows.
+    #[error("requested list limit exceeds server cap of {cap}")]
+    ListLimitTooLarge { cap: usize },
+
     #[error("upstream storage error: {0}")]
     Upstream(String),
 
@@ -37,7 +41,9 @@ impl FerryError {
             FerryError::InvalidPath(_) | FerryError::SameStorageType => StatusCode::BAD_REQUEST,
             FerryError::BackendNotConfigured(_) => StatusCode::SERVICE_UNAVAILABLE,
             FerryError::NotFound(_) => StatusCode::NOT_FOUND,
-            FerryError::TransferTooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
+            FerryError::TransferTooLarge { .. } | FerryError::ListLimitTooLarge { .. } => {
+                StatusCode::PAYLOAD_TOO_LARGE
+            }
             FerryError::Upstream(_) => StatusCode::BAD_GATEWAY,
             FerryError::Io(_) | FerryError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -50,6 +56,7 @@ impl FerryError {
             FerryError::BackendNotConfigured(_) => "backend_not_configured",
             FerryError::NotFound(_) => "not_found",
             FerryError::TransferTooLarge { .. } => "transfer_too_large",
+            FerryError::ListLimitTooLarge { .. } => "list_limit_too_large",
             FerryError::Upstream(_) => "upstream_error",
             FerryError::Io(_) => "io_error",
             FerryError::Internal(_) => "internal_error",

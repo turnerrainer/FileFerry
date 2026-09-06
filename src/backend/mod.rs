@@ -13,6 +13,24 @@ use crate::model::{FileEntry, StorageType};
 pub type BackendRef = Arc<dyn Backend>;
 pub type ByteReader = Pin<Box<dyn AsyncRead + Send + Sync>>;
 
+/// F4: default cap on the number of entries a single `list()` call
+/// returns. Callers can raise the cap via query params only up to
+/// `MAX_LIST_LIMIT`; anything past that is refused with 413.
+pub const DEFAULT_LIST_LIMIT: usize = 1_000;
+pub const MAX_LIST_LIMIT: usize = 10_000;
+
+/// F4: pagination options for `Backend::list`. Both backends must
+/// return entries in name order so `start_after` is deterministic.
+#[derive(Debug, Clone, Default)]
+pub struct ListOptions {
+    /// Return at most this many entries. `None` uses `DEFAULT_LIST_LIMIT`.
+    /// Callers exceeding `MAX_LIST_LIMIT` are rejected at the router.
+    pub limit: Option<usize>,
+    /// Skip until the first entry whose name is strictly greater than
+    /// this value. `None` starts from the first entry.
+    pub start_after: Option<String>,
+}
+
 /// A pluggable storage backend. Every method must be safe to call
 /// concurrently; implementations rely on backing clients (S3 client,
 /// tokio fs handles) that are themselves `Send + Sync`.
@@ -23,7 +41,11 @@ pub trait Backend: Send + Sync {
     /// List root-level files. Mirrors S3-Ferry semantics: entries whose
     /// key contains a `/` (i.e. lives in a nested "directory") are
     /// filtered out.
-    async fn list(&self) -> Result<Vec<FileEntry>, FerryError>;
+    ///
+    /// F4: `opts.limit` caps entries returned (default
+    /// `DEFAULT_LIST_LIMIT`); `opts.start_after` skips to a resume
+    /// point. Entries are returned in name order.
+    async fn list(&self, opts: ListOptions) -> Result<Vec<FileEntry>, FerryError>;
 
     /// Open a reader over the named object. Callers are expected to
     /// drain the reader promptly; both backends hold connection or
@@ -67,6 +89,11 @@ impl Backends {
 /// large downloads (S3 → local disk fill) and runaway uploads
 /// (local → S3 unbounded cost).
 ///
+/// F3: `inactivity` bounds how long the source reader is allowed to
+/// stall between successful reads. A slow-drip peer (1 byte/minute)
+/// used to keep the request alive because each byte reset the total
+/// timeout; this guard fires per poll.
+///
 /// Returns the number of bytes transferred on success.
 pub async fn stream_copy(
     src: BackendRef,
@@ -74,9 +101,14 @@ pub async fn stream_copy(
     dst: BackendRef,
     dst_path: &str,
     max_bytes: u64,
+    inactivity: std::time::Duration,
 ) -> Result<u64, FerryError> {
     let reader = src.open_read(src_path).await?;
-    let (limited, counter) = LimitedReader::new(reader, max_bytes);
+    // F3: wrap in a per-poll timeout BEFORE the byte cap so the source
+    // side of the pipe is the one that gets aborted when it stalls.
+    let mut timed = tokio_io_timeout::TimeoutReader::new(reader);
+    timed.set_timeout(Some(inactivity));
+    let (limited, counter) = LimitedReader::new(Box::pin(timed), max_bytes);
     dst.write_all(dst_path, Box::pin(limited), None).await?;
     let total = counter.load();
     tracing::info!(
@@ -190,6 +222,95 @@ mod tests {
         let mut out = Vec::new();
         let err = reader.read_to_end(&mut out).await.unwrap_err();
         assert!(err.to_string().contains("50 bytes"), "{err}");
+    }
+
+    #[tokio::test]
+    async fn stream_copy_aborts_when_source_stalls() {
+        // F3 regression: a source that never yields a byte must not
+        // hold the transfer open indefinitely. Wire a StallBackend as
+        // the source and a discarding sink as the destination; the copy
+        // must error within ~2× the inactivity budget.
+        use crate::model::{FileEntry, StorageType};
+        use std::pin::Pin;
+        use std::task::{Context, Poll};
+
+        struct StallReader;
+        impl tokio::io::AsyncRead for StallReader {
+            fn poll_read(
+                self: Pin<&mut Self>,
+                _cx: &mut Context<'_>,
+                _buf: &mut tokio::io::ReadBuf<'_>,
+            ) -> Poll<std::io::Result<()>> {
+                // Never wakes — TimeoutReader must fire.
+                Poll::Pending
+            }
+        }
+
+        struct StallBackend;
+        #[async_trait::async_trait]
+        impl Backend for StallBackend {
+            fn kind(&self) -> StorageType {
+                StorageType::Fs
+            }
+            async fn list(&self, _opts: ListOptions) -> Result<Vec<FileEntry>, FerryError> {
+                Ok(Vec::new())
+            }
+            async fn open_read(&self, _path: &str) -> Result<ByteReader, FerryError> {
+                Ok(Box::pin(StallReader))
+            }
+            async fn write_all(
+                &self,
+                _path: &str,
+                _reader: ByteReader,
+                _size_hint: Option<u64>,
+            ) -> Result<(), FerryError> {
+                unreachable!("no bytes should ever reach the destination");
+            }
+        }
+
+        struct SinkBackend;
+        #[async_trait::async_trait]
+        impl Backend for SinkBackend {
+            fn kind(&self) -> StorageType {
+                StorageType::S3
+            }
+            async fn list(&self, _opts: ListOptions) -> Result<Vec<FileEntry>, FerryError> {
+                Ok(Vec::new())
+            }
+            async fn open_read(&self, _path: &str) -> Result<ByteReader, FerryError> {
+                unreachable!();
+            }
+            async fn write_all(
+                &self,
+                _path: &str,
+                mut reader: ByteReader,
+                _size_hint: Option<u64>,
+            ) -> Result<(), FerryError> {
+                // Actually try to read — this is what triggers the
+                // TimeoutReader's per-poll clock.
+                let mut buf = [0u8; 64];
+                use tokio::io::AsyncReadExt;
+                let _ = reader.read(&mut buf).await?;
+                Ok(())
+            }
+        }
+
+        let src: BackendRef = Arc::new(StallBackend);
+        let dst: BackendRef = Arc::new(SinkBackend);
+        let inactivity = std::time::Duration::from_millis(200);
+        let started = std::time::Instant::now();
+        let result = tokio::time::timeout(
+            std::time::Duration::from_secs(2),
+            stream_copy(src, "in", dst, "out", 1024, inactivity),
+        )
+        .await;
+        let elapsed = started.elapsed();
+        let inner = result.expect("copy must complete (with error) inside outer timeout");
+        assert!(inner.is_err(), "stalled source must error, got {inner:?}");
+        assert!(
+            elapsed < std::time::Duration::from_millis(1500),
+            "copy should abort ~near inactivity budget, took {elapsed:?}"
+        );
     }
 
     #[tokio::test]

@@ -355,6 +355,102 @@ async fn copy_happy_path_transfers_bytes() {
 }
 
 #[tokio::test]
+async fn list_pagination_returns_next_cursor_when_full() {
+    // F4 regression: with limit=2 across 3 files, page 1 returns
+    // meta.nextCursor pointing at the last name; page 2 (with
+    // startAfter=cursor) returns the remainder without a cursor.
+    let tmp = TempDir::new().unwrap();
+    for n in ["a.txt", "b.txt", "c.txt"] {
+        tokio::fs::write(tmp.path().join(n), b"x").await.unwrap();
+    }
+    let app = build_router(app_state_with_fs_only(tmp.path()));
+
+    let resp = app
+        .clone()
+        .oneshot(
+            Request::get("/v1/files?type=FS&limit=2")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = parse_json(resp.into_body()).await;
+    let names: Vec<String> = json["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["name"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(names, vec!["a.txt", "b.txt"]);
+    let cursor = json["meta"]["nextCursor"]
+        .as_str()
+        .expect("nextCursor present when page fills")
+        .to_string();
+    assert_eq!(cursor, "b.txt");
+
+    let resp = app
+        .oneshot(
+            Request::get(format!("/v1/files?type=FS&limit=2&startAfter={cursor}"))
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+    let json = parse_json(resp.into_body()).await;
+    let names: Vec<String> = json["data"]
+        .as_array()
+        .unwrap()
+        .iter()
+        .map(|v| v["name"].as_str().unwrap().to_string())
+        .collect();
+    assert_eq!(names, vec!["c.txt"]);
+    assert!(
+        json["meta"].get("nextCursor").is_none(),
+        "tail page must not carry a cursor"
+    );
+}
+
+#[tokio::test]
+async fn list_limit_over_cap_returns_413() {
+    // F4 regression: a `limit` above MAX_LIST_LIMIT (10_000) is 413.
+    let tmp = TempDir::new().unwrap();
+    let app = build_router(app_state_with_fs_only(tmp.path()));
+    let resp = app
+        .oneshot(
+            Request::get("/v1/files?type=FS&limit=10001")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    let json = parse_json(resp.into_body()).await;
+    assert_eq!(json["error"], "list_limit_too_large");
+}
+
+#[tokio::test]
+async fn list_start_after_rejects_traversal() {
+    // F4 defence-in-depth: the pagination cursor is passed through the
+    // same validator as user paths, so a malicious cursor can't smuggle
+    // `..` into the S3 request.
+    let tmp = TempDir::new().unwrap();
+    let app = build_router(app_state_with_fs_only(tmp.path()));
+    let resp = app
+        .oneshot(
+            Request::get("/v1/files?type=FS&startAfter=..%2Fetc%2Fpasswd")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let json = parse_json(resp.into_body()).await;
+    assert_eq!(json["error"], "invalid_path");
+}
+
+#[tokio::test]
 async fn copy_enforces_max_response_bytes() {
     // Verify the transfer size cap actually fires at the HTTP layer.
     // Try to copy a 200 kB file with a 100 kB cap → 413.

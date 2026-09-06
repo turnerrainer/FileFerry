@@ -9,7 +9,7 @@ use aws_sdk_s3::types::Object;
 use aws_sdk_s3::Client;
 use tokio::io::AsyncWriteExt;
 
-use crate::backend::{Backend, ByteReader};
+use crate::backend::{Backend, ByteReader, ListOptions, DEFAULT_LIST_LIMIT};
 use crate::config::S3Config;
 use crate::error::FerryError;
 use crate::model::{FileEntry, StorageType};
@@ -90,7 +90,7 @@ impl Backend for S3Backend {
         StorageType::S3
     }
 
-    async fn list(&self) -> Result<Vec<FileEntry>, FerryError> {
+    async fn list(&self, opts: ListOptions) -> Result<Vec<FileEntry>, FerryError> {
         // S3-Ferry lists the whole bucket root and drops any key
         // containing `/`. We instead list under the configured prefix
         // and filter keys whose remainder still contains a `/` (i.e.
@@ -105,38 +105,68 @@ impl Backend for S3Backend {
             Some(format!("{}/", self.bucket_path))
         };
 
-        let mut req = self.client.list_objects_v2().bucket(&self.bucket);
-        if let Some(p) = &prefix_arg {
-            req = req.prefix(p.clone());
-        }
-        let resp = req
-            .send()
-            .await
-            .map_err(|e| FerryError::Upstream(format!("s3 list: {e}")))?;
-        let contents: Vec<Object> = resp.contents.unwrap_or_default();
-        let mut out = Vec::new();
-        for obj in contents {
-            let Some(key) = obj.key() else { continue };
-            let Some(name) = self.strip_prefix(key) else {
-                continue;
-            };
-            if name.is_empty() || name.contains('/') {
-                continue;
+        // F4: cap the total number of matching entries we accept from
+        // S3. S3 `list_objects_v2` returns up to 1000 objects per
+        // page; we page until we have `limit` matches or the listing
+        // ends. `start_after` is passed through natively so S3 does
+        // the skip server-side.
+        let limit = opts.limit.unwrap_or(DEFAULT_LIST_LIMIT);
+        let mut out: Vec<FileEntry> = Vec::new();
+        let mut continuation_token: Option<String> = None;
+        // Combine cursor + prefix when constructing the API
+        // `start_after` field: S3 wants a full key, not a name-only
+        // remainder.
+        let start_after_key = opts.start_after.as_ref().map(|name| match &prefix_arg {
+            Some(p) => format!("{p}{name}"),
+            None => name.clone(),
+        });
+
+        loop {
+            let mut req = self.client.list_objects_v2().bucket(&self.bucket);
+            if let Some(p) = &prefix_arg {
+                req = req.prefix(p.clone());
             }
-            let size = obj.size().unwrap_or(0);
-            let size_u64 = if size < 0 { 0 } else { size as u64 };
-            let last_modified = obj.last_modified().map(|t| {
-                // `DateTime::to_string` yields RFC-3339 with subsecond
-                // precision; `.fmt(Format::DateTime)` gives the trimmed
-                // seconds-precision form we want in list responses.
-                t.fmt(aws_smithy_types::date_time::Format::DateTime)
-                    .unwrap_or_else(|_| String::new())
-            });
-            out.push(FileEntry {
-                name: name.to_string(),
-                size: size_u64,
-                last_modified,
-            });
+            if let Some(t) = &continuation_token {
+                req = req.continuation_token(t.clone());
+            } else if let Some(sa) = &start_after_key {
+                req = req.start_after(sa.clone());
+            }
+
+            let resp = req
+                .send()
+                .await
+                .map_err(|e| FerryError::Upstream(format!("s3 list: {e}")))?;
+            let contents: Vec<Object> = resp.contents.unwrap_or_default();
+            for obj in contents {
+                let Some(key) = obj.key() else { continue };
+                let Some(name) = self.strip_prefix(key) else {
+                    continue;
+                };
+                if name.is_empty() || name.contains('/') {
+                    continue;
+                }
+                let size = obj.size().unwrap_or(0);
+                let size_u64 = if size < 0 { 0 } else { size as u64 };
+                let last_modified = obj.last_modified().map(|t| {
+                    t.fmt(aws_smithy_types::date_time::Format::DateTime)
+                        .unwrap_or_else(|_| String::new())
+                });
+                out.push(FileEntry {
+                    name: name.to_string(),
+                    size: size_u64,
+                    last_modified,
+                });
+                if out.len() >= limit {
+                    break;
+                }
+            }
+            if out.len() >= limit || !resp.is_truncated.unwrap_or(false) {
+                break;
+            }
+            continuation_token = resp.next_continuation_token.clone();
+            if continuation_token.is_none() {
+                break;
+            }
         }
         Ok(out)
     }

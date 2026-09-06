@@ -28,12 +28,11 @@ struct UnwiredField {
     planned_release: &'static str,
 }
 
-const UNWIRED: &[UnwiredField] = &[UnwiredField {
-    name: "cors_origin",
-    intended:
-        "CORS Access-Control-Allow-Origin header (accepts '*', empty, or comma-separated list)",
-    planned_release: "v0.1.0-alpha.2",
-}];
+// v0.1.0-alpha.3: `cors_origin` was moved from silent-drop-behind-WARN
+// to a hard boot failure (see F6 in the v1 audit). If future fields
+// land in the accepted-but-unwired state, add them here — the diagnose
+// pass survives an empty table.
+const UNWIRED: &[UnwiredField] = &[];
 
 /// Walk the config, emit WARN for every non-default value on a field
 /// that isn't wired.
@@ -53,15 +52,11 @@ pub fn diagnose(cfg: &AppConfig) {
 /// Returns true if the operator has set the named field to something
 /// other than the built-in default. Keeps the dispatch here so
 /// `UNWIRED` stays a plain data table.
-fn is_nondefault(cfg: &AppConfig, field: &str) -> bool {
-    let defaults = AppConfig::default();
-    match field {
-        "cors_origin" => cfg.cors_origin != defaults.cors_origin,
-        // If this panics, `UNWIRED` names a field this function doesn't
-        // know how to check — that's a bug in *this* module. Better to
-        // fail loudly at boot than to silently skip diagnostics.
-        other => panic!("diagnose: unwired-field dispatch missing case for {other:?}"),
-    }
+fn is_nondefault(_cfg: &AppConfig, field: &str) -> bool {
+    // If this panics, `UNWIRED` names a field this function doesn't
+    // know how to check — that's a bug in *this* module. Better to
+    // fail loudly at boot than to silently skip diagnostics.
+    panic!("diagnose: unwired-field dispatch missing case for {field:?}");
 }
 
 #[cfg(test)]
@@ -76,10 +71,10 @@ mod tests {
     }
 
     #[test]
-    fn diagnose_nondefault_cors_origin_does_not_panic() {
-        // We can't observe the tracing output from a plain unit test
-        // without a subscriber; this test's job is only to ensure the
-        // dispatch table survives a non-default value.
+    fn diagnose_empty_unwired_table_is_a_noop() {
+        // F6 moved cors_origin out of UNWIRED into a hard boot failure.
+        // The table is now empty; make sure diagnose still doesn't panic
+        // when handed a fully-populated config.
         let cfg = AppConfig {
             cors_origin: "https://example.com".into(),
             ..AppConfig::default()
