@@ -57,9 +57,15 @@ async fn main() -> anyhow::Result<()> {
 }
 
 fn init_tracing() {
+    // Audit LOG-v1 FN-LOG-1: emit ANSI colour codes only when stderr is
+    // a TTY. Under Docker / systemd, ship plain-text logs for SIEM.
+    use std::io::IsTerminal;
     let filter =
         EnvFilter::try_from_default_env().unwrap_or_else(|_| EnvFilter::new("info,fileferry=info"));
-    tracing_subscriber::fmt().with_env_filter(filter).init();
+    tracing_subscriber::fmt()
+        .with_env_filter(filter)
+        .with_ansi(std::io::stderr().is_terminal())
+        .init();
 }
 
 /// Parse `--config <path>` from argv. Kept tiny — a full CLI parser
