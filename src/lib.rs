@@ -1,3 +1,4 @@
+pub mod access_log;
 pub mod backend;
 pub mod config;
 pub mod diagnose;

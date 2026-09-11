@@ -50,6 +50,12 @@ pub fn build_router(state: AppState) -> Router {
             .layer(RequestBodyLimitLayer::new(max_body))
             .layer(tower_http::timeout::TimeoutLayer::new(timeout)),
     )
+    // Audit LOG-v1 FN-LOG-3: emit one INFO line per completed request
+    // for SOC2/HIPAA/GDPR compliance. See src/access_log.rs. Applied
+    // outside the ServiceBuilder since `from_fn` composes differently.
+    .layer(axum::middleware::from_fn(
+        crate::access_log::access_log_middleware,
+    ))
     .with_state(state)
 }
 
