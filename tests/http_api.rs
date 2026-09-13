@@ -227,6 +227,63 @@ async fn copy_rejects_traversal_path() {
 }
 
 #[tokio::test]
+async fn copy_rejects_unknown_field_in_body() {
+    // FN-LOG-2 regression (h2ck.me v1 LOG break-tests): before adding
+    // `#[serde(deny_unknown_fields)]`, junk fields were silently
+    // dropped by serde. Now an unknown field must fail deserialisation
+    // so schema-shape probes leave a signal in the log.
+    let tmp = TempDir::new().unwrap();
+    let app = build_router(app_state_with_fs_only(tmp.path()));
+    let body = json!({
+        "sourceStorageType": "FS",
+        "sourceFilePath": "a.txt",
+        "destinationStorageType": "S3",
+        "destinationFilePath": "b.txt",
+        "attacker_controlled_field": "pwned"
+    });
+    let resp = app
+        .oneshot(
+            Request::post("/v1/files/copy")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(
+            resp.status(),
+            StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY
+        ),
+        "expected 400/422, got {}",
+        resp.status()
+    );
+}
+
+#[tokio::test]
+async fn list_rejects_unknown_query_field() {
+    // FN-LOG-2 regression: unknown query params must also be refused.
+    let tmp = TempDir::new().unwrap();
+    let app = build_router(app_state_with_fs_only(tmp.path()));
+    let resp = app
+        .oneshot(
+            Request::get("/v1/files?type=FS&attacker_field=pwned")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        matches!(
+            resp.status(),
+            StatusCode::BAD_REQUEST | StatusCode::UNPROCESSABLE_ENTITY
+        ),
+        "expected 400/422 for unknown query field, got {}",
+        resp.status()
+    );
+}
+
+#[tokio::test]
 async fn copy_rejects_null_byte_path() {
     let tmp = TempDir::new().unwrap();
     let app = build_router(app_state_with_fs_only(tmp.path()));

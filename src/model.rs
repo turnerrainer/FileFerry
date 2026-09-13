@@ -46,6 +46,7 @@ pub struct ListFilesMeta {
 }
 
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct ListFilesQuery {
     #[serde(rename = "type")]
     pub storage_type: StorageType,
@@ -59,7 +60,14 @@ pub struct ListFilesQuery {
     pub start_after: Option<String>,
 }
 
+/// FN-LOG-2 (h2ck.me v1 LOG break-tests): `deny_unknown_fields` on the
+/// copy-request DTO. Without it, junk fields (`{"admin_override":true,
+/// "signature_verified":true}`) silently deserialised into `Default`
+/// values — leaving no signal in the log for schema-shape probes. Also
+/// forecloses the future footgun where a partial rename (e.g.
+/// `sourceFilepath` typo) succeeds by dropping the misnamed field.
 #[derive(Debug, Deserialize)]
+#[serde(deny_unknown_fields)]
 pub struct CopyFileRequest {
     #[serde(rename = "sourceStorageType")]
     pub source_storage_type: StorageType,
