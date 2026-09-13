@@ -56,6 +56,11 @@ tokio-io-timeout = "1.2"
 # debian-slim), so libc is unconditional.
 libc = "0.2"
 
+# Path hashing for the copy-audit log (FN-LOG-3). Already transitively
+# in the tree via aws-sdk-s3; adding the direct dep here so the audit
+# log doesn't silently break when aws-sdk-s3 drops it.
+sha2 = "0.10"
+
 [dev-dependencies]
 tower = { version = "0.4", features = ["util"] }
 

@@ -103,6 +103,7 @@ pub async fn stream_copy(
     max_bytes: u64,
     inactivity: std::time::Duration,
 ) -> Result<u64, FerryError> {
+    let start = std::time::Instant::now();
     let reader = src.open_read(src_path).await?;
     // F3: wrap in a per-poll timeout BEFORE the byte cap so the source
     // side of the pipe is the one that gets aborted when it stalls.
@@ -111,15 +112,38 @@ pub async fn stream_copy(
     let (limited, counter) = LimitedReader::new(Box::pin(timed), max_bytes);
     dst.write_all(dst_path, Box::pin(limited), None).await?;
     let total = counter.load();
+    let duration_ms = start.elapsed().as_millis() as u64;
+    // Fleet stronghold §S4 / h2ck.me v1 FN-LOG-3: audit trail per
+    // file-transfer at INFO. Paths are HASHED (first 12 hex chars of
+    // SHA-256) — the raw path may carry a tenant identifier like
+    // `/opt/tenant-A-billing/2026-Q3.csv` and must not land in log
+    // shippers / SIEMs. The hash still lets an operator correlate
+    // "the same file moved twice" without knowing the plaintext.
     tracing::info!(
         source = src.kind().as_str(),
-        source_path = src_path,
         destination = dst.kind().as_str(),
-        destination_path = dst_path,
+        source_path_hash = %path_hash(src_path),
+        destination_path_hash = %path_hash(dst_path),
         bytes = total,
-        "copy complete"
+        duration_ms,
+        outcome = "success",
+        "file_transfer_completed"
     );
     Ok(total)
+}
+
+/// Fleet stronghold §S4 / FN-LOG-3: short SHA-256 prefix in hex used to
+/// stand in for the raw path in audit logs. 12 hex chars = 48 bits =
+/// enough entropy to correlate the same path across log lines without
+/// exposing tenant identifiers.
+fn path_hash(path: &str) -> String {
+    use sha2::{Digest, Sha256};
+    let digest = Sha256::digest(path.as_bytes());
+    let mut out = String::with_capacity(12);
+    for byte in digest.iter().take(6) {
+        out.push_str(&format!("{:02x}", byte));
+    }
+    out
 }
 
 // ---------------------------------------------------------------
@@ -204,6 +228,32 @@ impl AtomicU64Load for Arc<AtomicU64> {
 mod tests {
     use super::*;
     use tokio::io::AsyncReadExt;
+
+    #[test]
+    fn path_hash_is_deterministic_and_short() {
+        let a = path_hash("tenant-A/billing/2026-Q3.csv");
+        let b = path_hash("tenant-A/billing/2026-Q3.csv");
+        assert_eq!(a, b, "hash must be stable across calls");
+        assert_eq!(a.len(), 12, "prefix length is 12 hex chars");
+        assert!(a.chars().all(|c| c.is_ascii_hexdigit()));
+    }
+
+    #[test]
+    fn path_hash_differs_between_distinct_paths() {
+        assert_ne!(path_hash("a.txt"), path_hash("b.txt"));
+    }
+
+    #[test]
+    fn path_hash_does_not_contain_raw_path_substring() {
+        // FN-LOG-3: the whole point of hashing is that the tenant
+        // identifier from the input path never appears in the output.
+        let sensitive = "tenant-abc-DEADBEEF";
+        let h = path_hash(sensitive);
+        assert!(
+            !h.contains("tenant") && !h.contains("DEADBEEF"),
+            "hash unexpectedly contains raw substring: {h}"
+        );
+    }
 
     #[tokio::test]
     async fn limited_reader_allows_up_to_cap() {
