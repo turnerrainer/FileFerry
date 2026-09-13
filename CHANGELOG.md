@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **FN4 — Shipped compose rootfs writable (h2ck.me v1 runtime
+  MEDIUM).** `docker-compose.yml` now sets `read_only: true` on
+  the FileFerry service and hoists the writable data path onto a
+  named volume (`fileferry_data:/app/data:rw`). A shell-level RCE
+  in the container can no longer overwrite the `fileferry` binary
+  or drop a shared library — only the data volume is writable.
+  Operators bind-mounting a host directory keep their existing
+  pattern; just replace the `volumes:` entry with
+  `- ./data:/app/data:rw`.
+
 ## [0.1.3-alpha] - 2026-09-06
 
 Third alpha. Security hardening pass driven by the h2ck.me v1

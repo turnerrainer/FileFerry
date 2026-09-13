@@ -23,13 +23,20 @@ services:
       # - FILEFERRY_S3_ACCESS_KEY_ID=<from-your-secret-manager>
       # - FILEFERRY_S3_SECRET_ACCESS_KEY=<from-your-secret-manager>
     restart: unless-stopped
-    # NOT read-only: the FS backend writes into /app/data at runtime.
-    # Every other hardening (cap_drop, no-new-privileges, non-root
-    # uid, resource limits) still applies. If your deployment only
-    # uses the S3 backend, you can safely set `read_only: true` and
-    # drop the data volume.
+    # FN4 (h2ck.me v1 runtime): make the container rootfs immutable
+    # so a shell-level RCE cannot overwrite `/app/fileferry` or drop a
+    # shared library. The FS backend still needs a writable data path;
+    # that's mounted separately as a named volume below (and a `tmpfs`
+    # for `/tmp` was already in place). Set `read_only: false` locally
+    # only when developing against the shipped baked-in `/app/data`.
+    read_only: true
     tmpfs:
       - /tmp:size=64M
+    volumes:
+      # FN4: writable data path lives on a named volume so the rootfs
+      # can stay read-only. If you'd rather bind-mount a host path,
+      # replace this with `- ./data:/app/data:rw`.
+      - fileferry_data:/app/data:rw
     security_opt:
       - no-new-privileges:true
     cap_drop:
@@ -47,3 +54,10 @@ services:
       timeout: 10s
       retries: 3
       start_period: 40s
+
+volumes:
+  # FN4: named volume that hosts the FS-backend data directory. Docker
+  # picks the driver (defaults to `local` = a directory under
+  # `/var/lib/docker/volumes`) so we don't inherit the surrounding
+  # rootfs's read-only flag.
+  fileferry_data:
