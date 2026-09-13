@@ -7,6 +7,49 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.1-alpha] - 2026-09-14
+
+Base-image security patch. Supersedes `0.2.0-alpha`, which never
+shipped an image: Trivy blocked the multi-arch build on 12
+Debian base-image CVEs (3 CRITICAL + 9 HIGH) in `perl-base`,
+`libsqlite3-0`, `libpcre2-8-0`, and `gzip`. All had fixes
+available in the Debian security archive but were not present in
+the `debian:13.6-slim` base tag pinned by the Dockerfile.
+
+Feature narrative identical to `[0.2.0-alpha]` below — no code
+changes, no test changes. Only the Dockerfile and the release
+metadata (Cargo.toml, VERSION, docker-compose.yml, README,
+CLAUDE.md) move.
+
+### Security
+
+- **Rebuild against latest Debian 13-slim + `apt upgrade`.**
+  Dockerfile base tag changed from `debian:13.6-slim` (frozen
+  minor pin) to `debian:13-slim` (major-tracked floating tag);
+  runtime-stage build now runs `apt-get upgrade -y` before
+  installing the pinned runtime packages, so every rebuild
+  starts from the latest Debian security patches. Closes the
+  12 base-image CVEs Trivy caught on the `0.2.0-alpha` build:
+  - CVE-2026-13221 (perl-base, CRITICAL)
+  - CVE-2026-42496 (perl-Archive-Tar, CRITICAL)
+  - CVE-2026-8376 (perl, CRITICAL)
+  - CVE-2026-41992 (gzip, HIGH)
+  - CVE-2026-86145, CVE-2026-89161 (libpcre2-8-0, HIGH)
+  - CVE-2026-11822, CVE-2026-11824 (libsqlite3-0, HIGH)
+  - CVE-2026-42497, CVE-2026-48962, CVE-2026-57432,
+    CVE-2026-57433 (perl-family, HIGH)
+
+### Note on `v0.2.0-alpha`
+
+The `v0.2.0-alpha` git tag exists on origin but there is
+**no signed image and no GitHub Release** for it. The tag is
+retained only as a historical marker for the commit at which the
+`[0.2.0-alpha]` feature set was frozen; the shipping artifact for
+that feature set is `0.2.1-alpha`. Consumers should treat
+`v0.2.0-alpha` as if it never existed and pull `0.2.1-alpha`
+instead. Nothing was published under the earlier version tag —
+Trivy's block is the reason.
+
 ## [0.2.0-alpha] - 2026-09-13
 
 Fourth alpha. Post-release hardening pass driven by the h2ck.me v1
@@ -416,7 +459,8 @@ client should know what is and isn't reproduced:
   silent-accept behaviour for the alpha window; will tighten
   to `400` with a specific error code in `v0.2.0`.
 
-[Unreleased]: https://github.com/turnerrainer/fileferry/compare/v0.2.0-alpha...HEAD
+[Unreleased]: https://github.com/turnerrainer/fileferry/compare/v0.2.1-alpha...HEAD
+[0.2.1-alpha]: https://github.com/turnerrainer/fileferry/releases/tag/v0.2.1-alpha
 [0.2.0-alpha]: https://github.com/turnerrainer/fileferry/releases/tag/v0.2.0-alpha
 [0.1.3-alpha]: https://github.com/turnerrainer/fileferry/releases/tag/v0.1.3-alpha
 [0.1.0-alpha.2]: https://github.com/turnerrainer/fileferry/releases/tag/v0.1.0-alpha.2

@@ -3,7 +3,7 @@
 A small HTTP file-transfer proxy. Rust re-implementation of
 [buerokratt/S3-Ferry](https://github.com/buerokratt/S3-Ferry).
 
-**Version:** 0.2.0-alpha · **License:** Apache-2.0
+**Version:** 0.2.1-alpha · **License:** Apache-2.0
 · **Docs:** [turnerrainer.github.io/fileferry](https://turnerrainer.github.io/fileferry/)
 · **Images:** `docker.io/turnerrainer/fileferry:alpha`, `ghcr.io/turnerrainer/fileferry:alpha`
 
@@ -41,12 +41,19 @@ cargo build --release --bin fileferry
 
 ## Upgrading
 
-### From `0.1.3-alpha` → `0.2.0-alpha`
+> **Note on `0.2.0-alpha`.** That version was tagged but never
+> shipped an image — Trivy blocked the build on 12 Debian
+> base-image CVEs. `0.2.1-alpha` cuts the same feature set on a
+> patched Dockerfile. Consumers should skip straight to
+> `0.2.1-alpha`; the sections below cover both the feature move
+> AND the base-image patch.
 
-`0.2.0-alpha` MINOR-bumps to signal a new `security:` config
+### From `0.1.3-alpha` → `0.2.1-alpha`
+
+`0.2.1-alpha` MINOR-bumps to signal a new `security:` config
 axis, a new `FILEFERRY_OFFLINE` runtime axis, and breaking wire
 changes to the audit-log line and to extractor-error response
-bodies. Read the [`0.2.0-alpha` entry in
+bodies. Read the [`0.2.1-alpha` entry in
 `CHANGELOG.md`](./CHANGELOG.md) before you bump;
 [`CLAUDE.md`](./CLAUDE.md) §3 has a nine-item grep cheat sheet.
 
@@ -77,7 +84,7 @@ Common upgrade seams:
   `security.trust_network=true` to silence it. Backwards-
   compatible; deployments keep booting.
 
-### From `0.1.0-alpha.2` → `0.2.0-alpha`
+### From `0.1.0-alpha.2` → `0.2.1-alpha`
 
 Combine the notes above with the `0.1.3-alpha` breaking-config
 seams that also still apply (also documented in

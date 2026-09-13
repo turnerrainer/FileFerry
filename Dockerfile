@@ -10,11 +10,20 @@ COPY Cargo.toml Cargo.lock ./
 COPY src ./src
 RUN cargo build --release --bin fileferry
 
-FROM debian:13.6-slim
+FROM debian:13-slim
 WORKDIR /app
 
-RUN apt-get update && apt-get install -y --no-install-recommends \
-    libssl3 ca-certificates curl tini \
+# `apt-get upgrade` pulls the latest Debian security patches during
+# every image build. Without it, the base tag's frozen package set
+# accumulates known CVEs against Trivy's database; the workflow's
+# Trivy step blocks HIGH+CRITICAL, so a stale base image would
+# block every release even when the fix is a routine `apt` update.
+# Base tag floats on `13-slim` (major-tracked) so a new Debian
+# point release automatically becomes the starting point.
+RUN apt-get update && \
+    apt-get -y upgrade && \
+    apt-get -y install --no-install-recommends \
+      libssl3 ca-certificates curl tini \
     && rm -rf /var/lib/apt/lists/*
 
 COPY --from=builder /build/target/release/fileferry /app/fileferry
