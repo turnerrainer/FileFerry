@@ -1,4 +1,5 @@
 pub mod fs;
+pub mod offline;
 pub mod s3;
 
 use std::pin::Pin;
