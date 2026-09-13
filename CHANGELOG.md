@@ -7,38 +7,157 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.0-alpha] - 2026-09-13
+
+Fourth alpha. Post-release hardening pass driven by the h2ck.me v1
+break-tests (`v1/BREAK-TESTS/*.md`), the h2ck.me v1
+public-exposure analysis, and the fleet-wide
+`FLEET-STRONGHOLDS.md`. Version MINOR-bumps to `0.2.0-alpha`
+because the release introduces a new `security:` config axis, a
+new `FILEFERRY_OFFLINE` runtime axis, breaking wire changes to the
+audit-log line, breaking response-body-shape changes for
+extractor rejections, and a breaking compose posture flip
+(`read_only: true` on the rootfs).
+
+Every new invariant has a regression test; the suite grew 53 →
+82 passing tests (48 unit + 2 compat + 32 integration).
+
 ### Added
 
-- **Optional inter-service bearer token (h2ck.me v1
-  public-exposure F-FF-1, F-FF-2, F-FF-3).** New `security:` config
-  block:
-  - `inter_service_token_env` — name of an env var whose value is
-    the required bearer token. When set (and non-empty), every
-    request to `/v1/files` and `/v1/files/copy` must present a
-    matching `Authorization: Bearer <token>` header. `/`,
-    `/health`, and `/api` remain public because reverse-proxy
-    liveness / discovery expects them to.
-  - `trust_network` (bool, default false) — suppresses the boot
-    WARN about an unauth non-loopback listener; set only when a
-    reverse proxy already authenticates every request before it
-    reaches FileFerry.
-  - Comparison is constant-time via the `subtle` crate; the token
-    value is never echoed to logs (redacted `Debug` on
-    `SecurityConfig`).
-  - Backwards-compatible: absent `security:` block ↔ pre-auth
-    behaviour.
+- **Optional inter-service bearer token — F-FF-1, F-FF-2, F-FF-3
+  (CRITICAL public-exposure finding closed).** New `security:`
+  config block gates `/v1/files` and `/v1/files/copy` behind an
+  `Authorization: Bearer <token>` when configured. `/`, `/health`,
+  `/api` remain public. Token is env-referenced
+  (`inter_service_token_env`) — never inlined in YAML. Comparison
+  is constant-time via `subtle`; `SecurityConfig::Debug` masks the
+  value as `***REDACTED***`. Boot logs a WARN when the listener is
+  non-loopback AND no token is configured AND
+  `security.trust_network=false`. Absent block ↔ pre-auth
+  behaviour (backwards-compatible).
+- **Offline mode — `FILEFERRY_OFFLINE=1`** (also `true`, `yes`,
+  case-insensitive) replaces the S3 backend with a stub that
+  fails every S3 call with
+  `Upstream("offline mode: outbound blocked by FILEFERRY_OFFLINE")`.
+  FS backend is unaffected. Prevents accidental live-S3 traffic
+  during pentest / break-tests. Fleet stronghold §9.1.
+- **Five default response security headers** (CSP, HSTS,
+  X-Frame-Options, X-Content-Type-Options, Referrer-Policy) on
+  every response, belt-and-braces against reverse-proxy
+  misconfiguration. Fleet stronghold §5.1.
+- **W3C `traceparent` + `x-trace-id` on every response.** When the
+  caller sends a valid inbound `traceparent`, the same `trace_id`
+  is echoed back so log-shippers can correlate a Ruuter-fronted
+  request across services. Otherwise a fresh 128-bit trace_id is
+  synthesised. Fleet stronghold §1.6 / O1.
+- **Access-log middleware** emits one INFO
+  `http_request_completed` line per request with method, route,
+  status, duration, and trace_id inherited from inbound
+  `traceparent`. Fleet stronghold §1.2 (FN-LOG-3).
+- **`LOG_ANSI` env var** — `1`/`true` forces ANSI colour on stderr,
+  `0`/`false` forces off. Absent = auto-detect via `atty` (off
+  under Docker / systemd). Fleet stronghold §1.1 (FN-LOG-1).
+- **CLAUDE.md** — new agent-facing brief. Codifies the verification
+  set, invariant tables (F, FN, F-FF, fleet-stronghold groups),
+  breaking-change grep cheat-sheets, config search order,
+  runtime-env-var table, repo landmarks, and the never-bump-
+  version / never-tag / never-dispatch-publish rules for LLM
+  contributors.
 
-### Security
+### Changed (breaking)
 
-- **FN4 — Shipped compose rootfs writable (h2ck.me v1 runtime
-  MEDIUM).** `docker-compose.yml` now sets `read_only: true` on
-  the FileFerry service and hoists the writable data path onto a
-  named volume (`fileferry_data:/app/data:rw`). A shell-level RCE
-  in the container can no longer overwrite the `fileferry` binary
-  or drop a shared library — only the data volume is writable.
-  Operators bind-mounting a host directory keep their existing
-  pattern; just replace the `volumes:` entry with
-  `- ./data:/app/data:rw`.
+- **Query and body extractor rejections now return structured JSON
+  (FN2).** `Query<T>` failures land as
+  `{"error":"bad_query","message":"..."}` (400); malformed JSON
+  bodies land as `{"error":"bad_body","message":"..."}` (400);
+  oversize bodies land as
+  `{"error":"body_too_large","message":"..."}` (413). No bare
+  `text/plain` errors remain on the response surface. Clients that
+  parse bare-text 4xx bodies must switch to JSON parsing.
+- **Copy-audit log line renamed and reshaped (FN-LOG-3).** The
+  `copy complete` INFO line is now
+  `file_transfer_completed`. The `source_path` /
+  `destination_path` fields are gone; they are replaced by
+  `source_path_hash` / `destination_path_hash` (SHA-256, first 12
+  hex chars). Adds `duration_ms` and `outcome=success`. Log
+  shippers / SIEM rules that grep the old event name or raw paths
+  must update. Rationale: tenant identifiers in paths (e.g.
+  `/opt/tenant-A-billing/2026-Q3.csv`) no longer leak into
+  downstream log storage.
+- **`FerryError::NotFound` no longer echoes the requested path in
+  the response body (FN6).** Fixed message string; full path stays
+  in the operator WARN log for debugging. Clients that grep the
+  message for the file name must read `error == "not_found"` from
+  the JSON body instead.
+- **`CopyFileRequest` and `ListFilesQuery` DTOs now use
+  `#[serde(deny_unknown_fields)]` (FN-LOG-2).** Junk fields in a
+  request body or query string are refused instead of silently
+  dropped. Clients that pack "just-in-case" extra fields must
+  remove them.
+- **Shipped `docker-compose.yml` is now `read_only: true` (FN4).**
+  Writable data lives on a named volume
+  (`fileferry_data:/app/data:rw`). Overrides that assumed a
+  writable rootfs need to switch to the named volume — or replace
+  it with a `- ./data:/app/data:rw` bind mount. Rationale: a
+  shell-level RCE inside the container can no longer overwrite
+  `/app/fileferry` or drop a shared library.
+
+### Fixed
+
+- **FN1 — Bare `.` path bypassed the validator.**
+  `sourceFilePath: "."` previously resolved to the data directory
+  itself and leaked `500 io_error: Is a directory (os error 21)`.
+  The validator now rejects `.` and `..` as segment-exact so
+  `.hidden` filenames still work but `foo/.`, `./foo`, and `.`
+  are refused. Returns the structured
+  `{"error":"invalid_path"}` 400 like every other rejection.
+
+### Security (posture reinforcement)
+
+- **Non-loopback boot WARN.** When the listener is
+  non-loopback AND `security.inter_service_token_env` is unset
+  AND `security.trust_network=false`, boot emits a diagnostic
+  WARN naming the concrete impact (S3 API cost, cross-backend
+  exfil) and how to fix it. Backwards-compatible — existing
+  deployments keep booting; the WARN is advisory. Future
+  release may promote to a boot refusal per fleet stronghold
+  §3.1.
+- **Constant-time bearer compare** via `subtle::ConstantTimeEq`
+  closes the timing side-channel on the auth path.
+
+### Docs
+
+- `book/src/configuration.md` — new `security:` block reference,
+  `copy_inactivity_secs`, expanded env-var table.
+- `book/src/failure-modes.md` — new matrix rows for the
+  extractor-error codes and `unauthorized`; new sections on
+  default response headers, boot WARNs, and the audit-log line.
+- `book/src/getting-started.md` — hardened `docker run` recipe
+  (`--read-only`, `--tmpfs`, `--cap-drop`, `--security-opt`),
+  bearer-gate quickstart, and offline-mode note.
+- `SECURITY.md` — new operational-hardening summary for the
+  additive items above.
+- `README.md` — refreshed version line and "Upgrading from"
+  section that brackets both `0.1.0-alpha.2` and `0.1.3-alpha`.
+- `CLAUDE.md` — see "Added" above.
+
+### Internal
+
+- Dependencies added: `subtle = "2.6"` (auth compare),
+  `sha2 = "0.10"` (audit-log path hash; already transitively
+  present via `aws-sdk-s3`).
+- Middleware ordering (outer → inner):
+  `TraceLayer → security_headers → traceparent → DefaultBodyLimit
+  → TimeoutLayer → routes`, all wrapped by the `access_log`
+  middleware.
+- New modules: `src/access_log.rs`, `src/auth.rs`,
+  `src/backend/offline.rs`, `src/extract.rs`,
+  `src/security_headers.rs`, `src/trace_headers.rs`.
+- `RUSTSEC-2026-0253` ignore in `deny.toml` still reports
+  "advisory-not-detected" (`aws-sdk-s3` moved past the affected
+  `lru`); leaving the ignore in place one more cycle to observe
+  post-release rather than combining a `deny.toml` cleanup with
+  the release commit.
 
 ## [0.1.3-alpha] - 2026-09-06
 
@@ -297,7 +416,8 @@ client should know what is and isn't reproduced:
   silent-accept behaviour for the alpha window; will tighten
   to `400` with a specific error code in `v0.2.0`.
 
-[Unreleased]: https://github.com/turnerrainer/fileferry/compare/v0.1.3-alpha...HEAD
+[Unreleased]: https://github.com/turnerrainer/fileferry/compare/v0.2.0-alpha...HEAD
+[0.2.0-alpha]: https://github.com/turnerrainer/fileferry/releases/tag/v0.2.0-alpha
 [0.1.3-alpha]: https://github.com/turnerrainer/fileferry/releases/tag/v0.1.3-alpha
 [0.1.0-alpha.2]: https://github.com/turnerrainer/fileferry/releases/tag/v0.1.0-alpha.2
 [0.1.0-alpha.1]: https://github.com/turnerrainer/fileferry/releases/tag/v0.1.0-alpha.1

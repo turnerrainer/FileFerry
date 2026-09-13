@@ -40,7 +40,8 @@ current line.
 
 | Version   | Support status                             |
 |-----------|--------------------------------------------|
-| `0.1.x`   | ✅ Supported (current line)                |
+| `0.2.x`   | ✅ Supported (current line)                |
+| `0.1.x`   | ⚠️  Prior line — receives only CRITICAL fixes on request |
 | `< 0.1.0` | n/a                                        |
 
 ## What we do to reduce supply-chain risk
@@ -127,11 +128,13 @@ release. Each was reviewed in the v1 audit (`h2ck.me/projects/FileFerry/v1/AUDIT
   future change enables client-side gzip decoding, revisit
   `LimitedReader` placement to keep the cap on decoded bytes.
 
-## Post-0.1.3-alpha hardening (landed on `dev`, unreleased)
+## `0.2.0-alpha` hardening
 
-Additive hardening from the h2ck.me v1 break-tests and the
-fleet-wide `FLEET-STRONGHOLDS.md`. All backwards-compatible with
-existing configs unless noted.
+Additive hardening shipped in `0.2.0-alpha` (2026-09-13) from
+the h2ck.me v1 break-tests and the fleet-wide
+`FLEET-STRONGHOLDS.md`. All backwards-compatible with existing
+configs unless noted; the release notes in `CHANGELOG.md`
+`[0.2.0-alpha]` call out the breaking wire-shape changes.
 
 - **Optional inter-service bearer gate.** New `security:` YAML
   block. When `inter_service_token_env` names a live env var,
