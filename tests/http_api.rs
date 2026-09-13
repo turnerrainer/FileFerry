@@ -90,6 +90,66 @@ async fn every_response_carries_security_headers() {
 }
 
 #[tokio::test]
+async fn every_response_carries_traceparent_and_x_trace_id() {
+    // Fleet stronghold §1.6 / O1: every response echoes/generates a
+    // W3C trace_id so log-shippers can correlate across services.
+    let tmp = TempDir::new().unwrap();
+    let app = build_router(app_state_with_fs_only(tmp.path()));
+    let resp = app
+        .oneshot(Request::get("/health").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    let traceparent = resp
+        .headers()
+        .get("traceparent")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    let x_trace_id = resp
+        .headers()
+        .get("x-trace-id")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        traceparent.starts_with("00-") && traceparent.len() > 40,
+        "expected W3C traceparent shape, got {traceparent:?}"
+    );
+    assert_eq!(
+        x_trace_id.len(),
+        32,
+        "x-trace-id must be 32-char hex, got {x_trace_id:?}"
+    );
+    // The trace_id in `traceparent` must equal `x-trace-id`.
+    let parts: Vec<&str> = traceparent.split('-').collect();
+    assert_eq!(parts.get(1).copied().unwrap_or(""), x_trace_id);
+}
+
+#[tokio::test]
+async fn traceparent_inbound_id_is_echoed() {
+    // W3C: when the caller sends a valid traceparent, the same trace_id
+    // must come back — that's the whole cross-service correlation point.
+    let tmp = TempDir::new().unwrap();
+    let app = build_router(app_state_with_fs_only(tmp.path()));
+    let resp = app
+        .oneshot(
+            Request::get("/health")
+                .header(
+                    "traceparent",
+                    "00-0af7651916cd43dd8448eb211c80319c-b7ad6b7169203331-01",
+                )
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    let x_trace_id = resp
+        .headers()
+        .get("x-trace-id")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert_eq!(x_trace_id, "0af7651916cd43dd8448eb211c80319c");
+}
+
+#[tokio::test]
 async fn health_returns_ok() {
     let tmp = TempDir::new().unwrap();
     let app = build_router(app_state_with_fs_only(tmp.path()));

@@ -17,6 +17,7 @@ use crate::error::FerryError;
 use crate::extract::{TypedJson, TypedQuery};
 use crate::model::{CopyFileRequest, ListFilesMeta, ListFilesQuery, ListFilesResponse};
 use crate::security_headers::security_headers;
+use crate::trace_headers::traceparent;
 use crate::validate::validate_path;
 
 #[derive(Clone)]
@@ -48,6 +49,12 @@ pub fn build_router(state: AppState) -> Router {
             // response — belt-and-braces even when a reverse proxy
             // already sets them.
             .layer(axum::middleware::from_fn(security_headers))
+            // Fleet stronghold §1.6 / O1: emit W3C `traceparent` +
+            // `x-trace-id` on every response. Extracts the trace_id
+            // from an inbound `traceparent` when the caller sends one;
+            // synthesises a fresh one otherwise. Lets log-shippers
+            // correlate a Ruuter-fronted request across services.
+            .layer(axum::middleware::from_fn(traceparent))
             // Inbound body cap. Files themselves are transferred
             // backend↔backend inside the handler — the HTTP body
             // only carries request metadata (JSON) — so the cap
