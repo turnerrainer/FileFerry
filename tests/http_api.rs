@@ -390,6 +390,71 @@ async fn copy_source_not_found_maps_to_404() {
     assert_eq!(resp.status(), StatusCode::NOT_FOUND);
     let json = parse_json(resp.into_body()).await;
     assert_eq!(json.get("error").unwrap(), "not_found");
+    // FN6: response body must NOT echo the caller-supplied source
+    // file name. Fixed message only; log carries the actual path.
+    let msg = json.get("message").unwrap().as_str().unwrap();
+    assert!(
+        !msg.contains("does-not-exist.txt"),
+        "not_found message must not echo probed name: {msg}"
+    );
+}
+
+#[tokio::test]
+async fn copy_not_found_message_does_not_echo_marker() {
+    // FN6 regression (h2ck.me v1 runtime FN6): use a distinctive
+    // marker as the probed filename and assert it never appears in
+    // the response body. This is a stronger check than the sibling
+    // test — the marker is unique so a partial-match wouldn't collide
+    // with an existing test fixture.
+    let tmp = TempDir::new().unwrap();
+    let src_root = tmp.path().join("src");
+    let dst_root = tmp.path().join("dst");
+    tokio::fs::create_dir_all(&src_root).await.unwrap();
+    tokio::fs::create_dir_all(&dst_root).await.unwrap();
+
+    let fs: BackendRef = Arc::new(
+        FsBackend::new(&FsConfig {
+            data_directory: src_root.clone(),
+        })
+        .unwrap(),
+    );
+    let fake_s3: BackendRef = Arc::new(
+        FsBackend::new(&FsConfig {
+            data_directory: dst_root.clone(),
+        })
+        .unwrap(),
+    );
+    let state = AppState {
+        backends: Backends {
+            fs,
+            s3: Some(fake_s3),
+        },
+        config: Arc::new(AppConfig::default()),
+    };
+    let app = build_router(state);
+    let marker = "unique_marker_DEADBEEF";
+    let body = json!({
+        "sourceStorageType": "FS",
+        "sourceFilePath": marker,
+        "destinationStorageType": "S3",
+        "destinationFilePath": "target.txt"
+    });
+    let resp = app
+        .oneshot(
+            Request::post("/v1/files/copy")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let body_str = std::str::from_utf8(&bytes).unwrap_or("");
+    assert!(
+        !body_str.contains(marker),
+        "response body must not echo probe marker: {body_str}"
+    );
 }
 
 #[tokio::test]

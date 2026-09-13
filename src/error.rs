@@ -15,7 +15,11 @@ pub enum FerryError {
     #[error("storage backend {0:?} is not configured")]
     BackendNotConfigured(crate::model::StorageType),
 
-    #[error("file not found: {0}")]
+    /// FN6 (h2ck.me v1 runtime): the `Display` of this variant is a
+    /// fixed string that does NOT echo the user-supplied path. The
+    /// inner `String` is kept for the operator-side `tracing::warn!`
+    /// emitted from `IntoResponse` so debugging isn't blinded.
+    #[error("file not found")]
     NotFound(String),
 
     #[error("transfer exceeded configured size cap of {cap} bytes")]
@@ -71,10 +75,21 @@ impl IntoResponse for FerryError {
             "error": self.code(),
             "message": self.to_string(),
         }));
-        // A 5xx warrants an operator log; 4xx is user error, DEBUG only.
-        if status.is_server_error() {
+        // FN6: for NotFound, the response `message` is a fixed string
+        // (`file not found`) so the caller doesn't get its own probe
+        // input echoed back. The full user-supplied path is preserved
+        // in the operator log at WARN so debugging still works.
+        if let FerryError::NotFound(path) = &self {
+            tracing::warn!(
+                error.code = self.code(),
+                requested_path = %path,
+                "request rejected: file not found"
+            );
+        } else if status.is_server_error() {
+            // A 5xx warrants an operator log.
             tracing::warn!(error.code = self.code(), error.message = %self, "request failed");
         } else {
+            // 4xx is user error, DEBUG only.
             tracing::debug!(error.code = self.code(), error.message = %self, "request rejected");
         }
         (status, body).into_response()
