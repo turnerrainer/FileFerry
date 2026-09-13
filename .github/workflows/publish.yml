@@ -186,23 +186,38 @@ jobs:
       #   2. The tag existed but had no Release — dispatch to finish
       #      shipping a partial release from a prior failed run.
       #
-      # The dispatched run enters `publish` with `inputs.tag=$TAG`
-      # (path 3 in the on: block), which correctly checks out the
-      # tag ref, runs Trivy + smoke tests + cosign, and creates the
-      # GitHub Release entry.
+      # `--ref` picks WHICH workflow-file version runs. It must point
+      # at the branch tip carrying the current workflow definition
+      # (i.e. this job's own ref = `dev`), NOT at the release tag —
+      # the tag was cut when `Cargo.toml` said the current version,
+      # so its embedded workflow file is a snapshot of whatever the
+      # workflow looked like at that moment. Workflow-only fixes
+      # (env-gate removals, dispatch-target changes, etc.) would be
+      # invisible to a `--ref $TAG_REF` dispatch.
+      #
+      # `-f tag=$TAG_REF` still directs `publish`'s Checkout step to
+      # the tagged commit (via the existing `inputs.tag` handling),
+      # so the code that gets built is the release-cut code even
+      # though the workflow file itself is the current one.
+      #
+      # Fires in TWO scenarios:
+      #   1. We just created the tag (fresh release) — always dispatch.
+      #   2. The tag existed but had no Release — dispatch to finish
+      #      shipping a partial release from a prior failed run.
       - name: Dispatch publish workflow on the tag
         if: steps.exists.outputs.release_exists == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_REF: ${{ steps.version.outputs.tag_ref }}
           REPO: ${{ github.repository }}
+          WORKFLOW_REF: ${{ github.ref_name }}
         run: |
           set -euo pipefail
           gh workflow run publish.yml \
             --repo "$REPO" \
-            --ref  "$TAG_REF" \
+            --ref  "$WORKFLOW_REF" \
             -f     tag="$TAG_REF"
-          echo "::notice::Dispatched publish.yml on ${TAG_REF} — run will proceed to completion (no approval prompt)."
+          echo "::notice::Dispatched publish.yml (workflow file from ${WORKFLOW_REF}, checkout=${TAG_REF}) — run will proceed to completion (no approval prompt)."
 
   publish:
     # Skip on `push:dev` — that's `tag-on-version-bump`'s job.
