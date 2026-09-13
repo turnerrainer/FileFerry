@@ -1,39 +1,61 @@
 name: Publish container image
 
-# Trigger on release tag push OR manual dispatch. In both cases the
-# publish job runs inside the `production` GitHub Environment, which
-# is configured with required reviewers — no image is pushed to
-# GHCR / Docker Hub without an explicit human approval in the
-# Actions UI, even if a tag is created by accident.
+# Three entry paths, one deploy path. In all three cases the actual
+# `publish` job runs inside the `production` GitHub Environment,
+# which is configured with required reviewers — no image is pushed
+# to GHCR / Docker Hub without an explicit human approval in the
+# Actions UI.
+#
+# 1. **Release-by-merge** (the primary "single-PR release" flow):
+#    Merging a `dev → main` PR runs the `tag-from-main` job. It
+#    reads the version from `Cargo.toml`, refuses to proceed if
+#    the corresponding `v<version>` tag already exists, otherwise
+#    tags the merge commit and pushes the tag. The tag push then
+#    triggers `publish` on the tag ref, which waits for the
+#    `production` environment approval. From the maintainer's
+#    perspective: merge the release PR → approve the deploy →
+#    Release entry appears at
+#    <https://github.com/turnerrainer/fileferry/releases>.
+#
+# 2. **Tag-push** (the legacy / manual path):
+#    `git push origin v0.2.0-alpha` skips `tag-from-main` and
+#    triggers `publish` directly. Kept so pre-existing tags and
+#    hotfix workflows still work.
+#
+# 3. **workflow_dispatch** (the escape hatch):
+#    Lets a maintainer re-run `publish` against an existing tag
+#    from the Actions UI without cutting a new tag. Useful when
+#    the workflow itself has a config bug. Still gated by the
+#    `production` environment reviewer.
 #
 # Alpha versioning: PATCH-as-alpha-counter with a bare `-alpha`
-# suffix (0.1.1-alpha, 0.1.2-alpha, 0.1.3-alpha, ...). See
-# CHANGELOG.md for the mapping from the old `-alpha.N` form.
+# suffix (0.1.1-alpha, 0.1.2-alpha, 0.1.3-alpha, 0.2.0-alpha, ...).
+# See CHANGELOG.md for the mapping from the old `-alpha.N` form.
 #
-# Tag-push (the normal path):
+# Tag shapes:
 #   v0.1.0        → stable release
 #   v0.1.3-alpha  → pre-release (alpha / beta / rc / preview /
 #                   any SemVer pre-release identifier)
-# The `derive version tags` step below reads which shape was pushed
+# The `Compose image tags` step below reads which shape was pushed
 # and chooses whether to move :latest and :major.minor accordingly.
-#
-# workflow_dispatch (the escape hatch):
-#   Lets a maintainer re-run the publish workflow against an existing
-#   tag from the Actions UI without cutting a new tag. Useful when
-#   the workflow itself has a config bug. Still gated by the
-#   `production` environment reviewer.
 on:
   push:
+    branches: [main]
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
       - 'v[0-9]+.[0-9]+.[0-9]+-*'
   workflow_dispatch:
     inputs:
       tag:
-        description: "Existing tag to publish (e.g. v0.1.3-alpha). Must already exist on the repo."
+        description: "Existing tag to publish (e.g. v0.2.0-alpha). Must already exist on the repo."
         required: true
         type: string
 
+# Concurrency keys on `github.ref` — so a `push:main` and a
+# subsequent `push:tag/v0.2.0-alpha` for the same release land in
+# DIFFERENT groups and can proceed serially (tag-from-main first,
+# then publish on the tag push). Two runs of the same tag / branch
+# are serialised.
 concurrency:
   group: publish-${{ github.ref }}
   cancel-in-progress: false
@@ -48,7 +70,87 @@ permissions:
   attestations: write
 
 jobs:
+  # Release-by-merge entry point. Fires only on `push:main`.
+  # Reads the version from `Cargo.toml`, refuses to proceed if the
+  # corresponding `v<version>` tag already exists (release already
+  # shipped for this version — nothing to do), otherwise tags the
+  # merge commit and pushes the tag. The tag push then triggers the
+  # `publish` job below via the `push: tags:` entry.
+  #
+  # No `environment:` on this job — creating a tag is not a deploy.
+  # The deploy gate lives on `publish`. That way a maintainer can
+  # merge a release PR without immediately being asked to approve
+  # a deploy; the approval happens as a separate step when the tag
+  # push triggers `publish`.
+  tag-from-main:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+    runs-on: ubuntu-latest
+    steps:
+      - name: Checkout
+        uses: actions/checkout@v5
+        with:
+          fetch-depth: 0
+          # Explicit token so `git push` uses GITHUB_TOKEN with the
+          # workflow-level `contents: write` permission.
+          token: ${{ secrets.GITHUB_TOKEN }}
+
+      - name: Read Cargo.toml version → tag_ref
+        id: version
+        run: |
+          set -euo pipefail
+          # `cargo pkgid` would work but pulls in the full resolver;
+          # for a single-crate repo the direct grep is faster and
+          # zero-dependency.
+          VERSION="$(grep -E '^version = "' Cargo.toml | head -1 | cut -d'"' -f2)"
+          if [ -z "$VERSION" ]; then
+            echo "::error::could not read version from Cargo.toml"
+            exit 1
+          fi
+          TAG_REF="v${VERSION}"
+          echo "version=${VERSION}"  >> "$GITHUB_OUTPUT"
+          echo "tag_ref=${TAG_REF}"  >> "$GITHUB_OUTPUT"
+          echo "Derived tag: ${TAG_REF} (from Cargo.toml version=${VERSION})"
+
+      - name: Skip if release tag already exists
+        id: exists
+        env:
+          TAG_REF: ${{ steps.version.outputs.tag_ref }}
+        run: |
+          set -euo pipefail
+          if git rev-parse --verify --quiet "refs/tags/${TAG_REF}" >/dev/null \
+             || git ls-remote --exit-code --tags origin "refs/tags/${TAG_REF}" >/dev/null 2>&1
+          then
+            echo "::notice::${TAG_REF} already exists — release already shipped for this version; nothing to do."
+            echo "already_shipped=true" >> "$GITHUB_OUTPUT"
+          else
+            echo "already_shipped=false" >> "$GITHUB_OUTPUT"
+          fi
+
+      # Only create + push the tag if it doesn't already exist. The
+      # push triggers a second workflow run (this same file) via the
+      # `push: tags:` entry above, which runs the `publish` job.
+      - name: Create and push release tag
+        if: steps.exists.outputs.already_shipped == 'false'
+        env:
+          TAG_REF: ${{ steps.version.outputs.tag_ref }}
+          VERSION: ${{ steps.version.outputs.version }}
+        run: |
+          set -euo pipefail
+          git config user.name  'github-actions[bot]'
+          git config user.email 'github-actions[bot]@users.noreply.github.com'
+          git tag -a "${TAG_REF}" -m "FileFerry ${TAG_REF}
+
+          Auto-tagged by publish.yml on push to main.
+          See CHANGELOG.md [${VERSION}] for release notes.
+          "
+          git push origin "${TAG_REF}"
+          echo "::notice::Pushed ${TAG_REF} — publish workflow will run on the tag ref and wait for production-env approval."
+
   publish:
+    # Skip on `push:main` — that's `tag-from-main`'s job. Run on
+    # tag pushes (the tag `tag-from-main` just created, or an
+    # externally-pushed tag) and on manual dispatch.
+    if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest
     # Required reviewers on the `production` environment enforce the
     # release policy: no deploy without a human approval in the

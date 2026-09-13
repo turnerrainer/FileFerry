@@ -13,7 +13,15 @@ spot configs that break under the current release.
   tag, never dispatch the publish workflow.** Releases are cut
   by the maintainer as a dedicated `chore(release)` commit
   merged from a `release/*` branch.
-- **Branches**: work on `dev`, PR into `dev`, release cuts merge `dev → main`.
+- **Branches**: work on `dev`, PR into `dev`, release cuts merge
+  `dev → main`. **Merging a `dev → main` PR is the release
+  trigger** — `publish.yml`'s `tag-from-main` job reads the
+  version from `Cargo.toml`, tags the merge commit as
+  `v<version>`, and pushes the tag. The tag push runs the
+  `publish` job under the `production` GitHub Environment, which
+  requires a maintainer's approval before any image ships. Two
+  human touchpoints: (1) merge the release PR, (2) approve the
+  deploy. Agents never do either.
 - **Companion files**: `README.md` (user-facing quickstart),
   `SECURITY.md` (disclosure + posture), `STANDARDS.md` (build/test/publish
   rules), `CHANGELOG.md` (per-release breaking-change narrative), and
