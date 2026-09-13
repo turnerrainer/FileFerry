@@ -13,9 +13,17 @@ One of:
 
 ```bash
 docker run -d --name fileferry -p 8080:8080 \
+  --read-only --tmpfs /tmp:size=64M \
+  --security-opt no-new-privileges:true --cap-drop=ALL \
   -v "$PWD/data:/app/data:rw" \
   turnerrainer/fileferry:alpha
 ```
+
+The `--read-only` and `--tmpfs` / `--cap-drop` / `--security-opt`
+flags mirror the shipped `docker-compose.yml` posture — a shell-level
+RCE inside the container cannot overwrite `/app/fileferry` or drop a
+shared library; only `/app/data` (bind-mounted here) and `/tmp`
+(private tmpfs) are writable.
 
 Confirm it's up:
 
@@ -56,6 +64,8 @@ To also enable the S3 backend, mount a `fileferry.yaml` with an
 
 ```bash
 docker run -d --name fileferry -p 8080:8080 \
+  --read-only --tmpfs /tmp:size=64M \
+  --security-opt no-new-privileges:true --cap-drop=ALL \
   -v "$PWD/data:/app/data:rw" \
   -v "$PWD/fileferry.yaml:/app/fileferry.yaml:ro" \
   -e FILEFERRY_S3_ACCESS_KEY_ID="$MY_ACCESS_KEY" \
@@ -67,6 +77,53 @@ See [Configuration](./configuration.md) for every field, and
 [Failure modes](./failure-modes.md) for what happens when the S3
 block references an env var that isn't set (spoiler: hard-fail on
 boot, never a silent downgrade).
+
+## 3.1 Turn on the inter-service bearer gate (recommended)
+
+FileFerry has no built-in auth by default; `/v1/files` and
+`/v1/files/copy` are open to any caller. Every unauth
+`POST /v1/files/copy` triggers backend I/O and, when S3 is
+configured, S3-billed API calls. Fleet posture treats this as
+"terminate at a reverse proxy" — but you can also enable the
+optional bearer gate directly on FileFerry:
+
+Add to `fileferry.yaml`:
+
+```yaml
+security:
+  inter_service_token_env: FILEFERRY_INTER_SERVICE_TOKEN
+  trust_network: false
+```
+
+Set the env var when running:
+
+```bash
+docker run … \
+  -e FILEFERRY_INTER_SERVICE_TOKEN="$MY_GENERATED_TOKEN" \
+  …
+```
+
+Then every call to `/v1/files*` must present the header
+`Authorization: Bearer <token>`:
+
+```bash
+curl -sf http://localhost:8080/v1/files?type=FS \
+  -H "Authorization: Bearer $MY_GENERATED_TOKEN"
+```
+
+`/`, `/health`, and `/api` remain public so a reverse-proxy
+liveness / discovery flow keeps working. Missing or wrong bearer
+returns `401 unauthorized` with the fleet's structured JSON body.
+Comparison is constant-time; the token value is never logged.
+
+## 3.2 Offline mode for pentest / break-tests
+
+Set `FILEFERRY_OFFLINE=1` (also `true` / `yes`) to swap the S3
+backend for a stub that fails every S3 call with
+`502 upstream_error: offline mode: outbound blocked by
+FILEFERRY_OFFLINE`. The FS backend is unaffected. This is the
+safest way to run break-tests against a production-shaped
+config without any risk of touching real S3.
 
 ## 4. Copy a file
 

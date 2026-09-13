@@ -46,6 +46,22 @@ limits:
   max_request_bytes: 33554432     # 32 MiB — inbound HTTP body cap
   max_response_bytes: 5368709120  # 5 GiB  — per-transfer stream cap
   request_timeout_secs: 300       # 5 min  — per-request timeout
+  copy_inactivity_secs: 30        # per-poll inactivity guard on the source reader (slow-drip DoS defence)
+
+# ------------------------------------------------------------------
+# Optional inter-service auth — OMIT the whole block to leave gated
+# routes open (backwards-compatible with pre-auth deployments).
+# ------------------------------------------------------------------
+security:
+  # Name of an env var whose value is the bearer token clients must
+  # present as `Authorization: Bearer <token>` on `/v1/files*`.
+  # `/`, `/health`, `/api` remain public regardless. Comparison is
+  # constant-time; the token value is never logged.
+  inter_service_token_env: FILEFERRY_INTER_SERVICE_TOKEN
+  # true = suppress the boot WARN about an unauth non-loopback
+  # listener. Set only when a reverse proxy / service mesh
+  # authenticates every request before it reaches FileFerry.
+  trust_network: false
 ```
 
 ## Field reference
@@ -56,7 +72,7 @@ limits:
 |------------------------|---------|---------|-----------------------------------------------------------------|
 | `port`                 | integer | `8080`  | TCP port for the HTTP server                                    |
 | `documentation_enabled`| bool    | `true`  | If false, `GET /api` returns 404                                |
-| `cors_origin`          | string  | `""`    | Reserved. Not enforced yet — a future release will add tower-http CORS |
+| `cors_origin`          | string  | `""`    | **Must remain empty.** A non-empty value is a hard boot failure (terminate CORS at your reverse proxy). |
 
 ### `fs`
 
@@ -87,9 +103,36 @@ exits with a clear error identifying the missing variable.
 
 | Field                   | Type   | Default        | Notes                                                          |
 |-------------------------|--------|----------------|----------------------------------------------------------------|
-| `max_request_bytes`     | u64    | `33554432`     | 32 MiB. Caps inbound HTTP body via `tower-http` request-body limit. |
+| `max_request_bytes`     | u64    | `33554432`     | 32 MiB. Caps inbound HTTP body via `DefaultBodyLimit`; oversize → `413 body_too_large` (structured JSON). |
 | `max_response_bytes`    | u64    | `5368709120`   | 5 GiB. Caps the total bytes moved through `stream_copy`. Exceeding it aborts the transfer with `500 io_error` mid-stream. |
 | `request_timeout_secs`  | u64    | `300`          | 5 min. Per-request timeout enforced by `tower-http`.           |
+| `copy_inactivity_secs`  | u64    | `30`           | Per-poll inactivity guard on the source reader inside `stream_copy`. Aborts a slow-drip peer (e.g. 1 byte/minute) before it can hold a request slot for the full `request_timeout_secs`. |
+
+### `security` (optional)
+
+Omit the block entirely to leave `/v1/files*` open to any caller
+(backwards-compatible with pre-auth deployments). When present, the
+block gates the backend-touching routes; the always-open `/`, `/health`
+and `/api` are unaffected.
+
+| Field                       | Type   | Default | Notes                                                            |
+|-----------------------------|--------|---------|------------------------------------------------------------------|
+| `inter_service_token_env`   | string | *unset* | Name of an env var whose value is the required bearer token. When set (and non-empty), `/v1/files` and `/v1/files/copy` require `Authorization: Bearer <token>`. Comparison is constant-time via the `subtle` crate; the token is never logged. |
+| `trust_network`             | bool   | `false` | Suppresses the boot WARN about an unauth non-loopback listener. Set to `true` only when a reverse proxy or service mesh already authenticates every request before it reaches FileFerry. |
+
+When the block is present, missing or wrong `Authorization` headers
+receive:
+
+```
+HTTP/1.1 401 Unauthorized
+Content-Type: application/json
+
+{"error":"unauthorized","message":"missing bearer token"}
+```
+
+or `"invalid bearer token"` on mismatch. `/`, `/health`, and `/api`
+always return without auth so a reverse-proxy liveness / discovery
+flow keeps working.
 
 ## Environment overrides
 
@@ -101,6 +144,11 @@ var" behaviour — that ambiguity was the source of the
 The special env var `FILEFERRY_CONFIG` selects which YAML file to
 load; it does not change any values inside the file.
 
-The `RUST_LOG` env var controls log verbosity via
-[`tracing_subscriber::EnvFilter`](https://docs.rs/tracing-subscriber).
-Default: `info,fileferry=info`.
+| Env var                                                                       | Effect                                                                                                     |
+|-------------------------------------------------------------------------------|------------------------------------------------------------------------------------------------------------|
+| `RUST_LOG`                                                                    | Controls log verbosity via [`tracing_subscriber::EnvFilter`](https://docs.rs/tracing-subscriber). Default: `info,fileferry=info`. |
+| `LOG_ANSI`                                                                    | `1`/`true` → force ANSI colour codes on stderr. `0`/`false` → force off. Absent → auto-detect via `atty` (off under Docker / systemd). |
+| `FILEFERRY_CONFIG`                                                            | Path to YAML config; higher precedence than `./fileferry.yaml`.                                            |
+| `FILEFERRY_OFFLINE`                                                           | `1` / `true` / `yes` (case-insensitive) → swap the S3 backend for an offline stub that fails every S3 call with `Upstream("offline mode: outbound blocked by FILEFERRY_OFFLINE")`. FS backend is unaffected. Use during pentest / break-tests so FileFerry cannot accidentally hit real S3. |
+| the env var named by `security.inter_service_token_env`                       | Value is the required bearer token.                                                                        |
+| the env vars named by `s3.access_key_id_env` / `s3.secret_access_key_env`     | S3 credentials, resolved at boot; unset or empty = hard boot failure.                                      |
