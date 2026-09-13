@@ -67,10 +67,16 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  # `contents: write` is required so the final step can create the
-  # GitHub Release entry (populated from the matching CHANGELOG.md
-  # section). No other step writes to the repo.
+  # `contents: write` is required so `tag-on-version-bump` can push
+  # the release tag and so the `Create GitHub Release` step can
+  # write to the Releases surface.
   contents: write
+  # `actions: write` lets `tag-on-version-bump` dispatch this same
+  # workflow on the newly-pushed tag via `gh workflow run`.
+  # Necessary because GITHUB_TOKEN-authored pushes do NOT trigger
+  # downstream workflow runs (GHA's recursion guard). Without this
+  # dispatch, the tag lands but `publish` never fires.
+  actions: write
   packages: write
   id-token: write
   attestations: write
@@ -131,9 +137,7 @@ jobs:
             echo "already_shipped=false" >> "$GITHUB_OUTPUT"
           fi
 
-      # Only create + push the tag if it doesn't already exist. The
-      # push triggers a second workflow run (this same file) via the
-      # `push: tags:` entry above, which runs the `publish` job.
+      # Only create + push the tag if it doesn't already exist.
       - name: Create and push release tag
         if: steps.exists.outputs.already_shipped == 'false'
         env:
@@ -145,11 +149,37 @@ jobs:
           git config user.email 'github-actions[bot]@users.noreply.github.com'
           git tag -a "${TAG_REF}" -m "FileFerry ${TAG_REF}
 
-          Auto-tagged by publish.yml on push to main.
+          Auto-tagged by publish.yml on push to dev.
           See CHANGELOG.md [${VERSION}] for release notes.
           "
           git push origin "${TAG_REF}"
-          echo "::notice::Pushed ${TAG_REF} — publish workflow will run on the tag ref and wait for production-env approval."
+          echo "::notice::Pushed ${TAG_REF}."
+
+      # GHA recursion guard: a tag push authored by GITHUB_TOKEN
+      # does NOT trigger any workflow — including this one on its
+      # `push: tags:` entry. Without an explicit dispatch here, the
+      # tag would land but `publish` would never fire, and the
+      # Releases page would stay stale. `workflow_dispatch` events
+      # are the ONE exception the recursion guard allows for
+      # GITHUB_TOKEN, so we use it to bridge the gap.
+      #
+      # The dispatched run enters `publish` with `inputs.tag=$TAG`
+      # (path 3 in the on: block), which correctly checks out the
+      # tag ref, runs Trivy + smoke tests + cosign, and creates the
+      # GitHub Release entry.
+      - name: Dispatch publish workflow on the new tag
+        if: steps.exists.outputs.already_shipped == 'false'
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_REF: ${{ steps.version.outputs.tag_ref }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          gh workflow run publish.yml \
+            --repo "$REPO" \
+            --ref  "$TAG_REF" \
+            -f     tag="$TAG_REF"
+          echo "::notice::Dispatched publish.yml on ${TAG_REF} — the run waits for approval in the production GitHub Environment."
 
   publish:
     # Skip on `push:dev` — that's `tag-on-version-bump`'s job.
@@ -383,7 +413,14 @@ jobs:
       # this step so we never publish a Release for an unverified
       # image. `prerelease` is derived from the tag (any tag with a
       # `-<suffix>` is a pre-release per `steps.meta`).
+      #
+      # Pin to major version `@v2` — GitHub Actions consumers should
+      # prefer SHA pins for supply-chain integrity, but `softprops/
+      # action-gh-release` publishes a signed release for each `vN`
+      # tag and moves it atomically. Revisit if the fleet-wide
+      # posture tightens to require full SHA pins.
       - name: Create GitHub Release
+        id: gh_release
         uses: softprops/action-gh-release@v2
         with:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
@@ -392,3 +429,51 @@ jobs:
           prerelease: ${{ steps.meta.outputs.prerelease }}
           make_latest: ${{ steps.meta.outputs.prerelease == 'false' }}
           fail_on_unmatched_files: false
+
+      # Belt-and-braces verification. `softprops/action-gh-release`
+      # exits 0 even in some silent-failure modes (rate-limit fall-
+      # through, quiet API 5xx retried and given up). Re-fetch the
+      # Release via the REST API and assert it exists — turns
+      # "Release probably landed" into "Release definitely landed
+      # or the workflow errors loudly for the operator". Uses the
+      # same GITHUB_TOKEN the create step just used, so no extra
+      # secret is needed.
+      - name: Verify GitHub Release landed
+        env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
+          TAG_REF: ${{ github.event.inputs.tag || github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          set -euo pipefail
+          if ! gh release view "$TAG_REF" --repo "$REPO" --json url,tagName,isPrerelease,createdAt > /tmp/release.json; then
+            echo "::error::GitHub Release '$TAG_REF' did NOT appear after the create step. The image is signed and pushed, but the Releases page is stale."
+            echo "::error::Re-run this workflow via workflow_dispatch to retry the Release-create step, or backfill manually with: gh release create $TAG_REF --title \"FileFerry $TAG_REF\" --prerelease --notes-file <notes>"
+            exit 1
+          fi
+          URL="$(jq -r .url /tmp/release.json)"
+          echo "::notice title=Release published::${URL}"
+
+      # Audit trail in the Actions UI. The maintainer approving the
+      # deploy sees the extracted CHANGELOG slice + the Release URL
+      # in the run's Summary tab, so a bad extraction is visible
+      # after the fact without leaving the Actions page.
+      - name: Emit release preview to job summary
+        if: always()
+        env:
+          BODY: ${{ steps.notes.outputs.body }}
+          TAG_REF: ${{ github.event.inputs.tag || github.ref_name }}
+          REPO: ${{ github.repository }}
+        run: |
+          {
+            echo "## Release ${TAG_REF}"
+            echo ""
+            echo "**Releases page:** https://github.com/${REPO}/releases/tag/${TAG_REF}"
+            echo ""
+            echo "**Container images (signed):**"
+            echo "- \`ghcr.io/turnerrainer/fileferry:${TAG_REF#v}\`"
+            echo "- \`docker.io/turnerrainer/fileferry:${TAG_REF#v}\`"
+            echo ""
+            echo "### Release body (as extracted from CHANGELOG.md)"
+            echo ""
+            printf '%s\n' "$BODY"
+          } >> "$GITHUB_STEP_SUMMARY"
