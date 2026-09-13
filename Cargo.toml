@@ -61,6 +61,10 @@ libc = "0.2"
 # log doesn't silently break when aws-sdk-s3 drops it.
 sha2 = "0.10"
 
+# Constant-time equality for the optional inter-service bearer token
+# comparison. Fleet stronghold §3.2 (see FLEET-STRONGHOLDS.md).
+subtle = "2.6"
+
 [dev-dependencies]
 tower = { version = "0.4", features = ["util"] }
 

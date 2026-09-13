@@ -7,6 +7,27 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **Optional inter-service bearer token (h2ck.me v1
+  public-exposure F-FF-1, F-FF-2, F-FF-3).** New `security:` config
+  block:
+  - `inter_service_token_env` — name of an env var whose value is
+    the required bearer token. When set (and non-empty), every
+    request to `/v1/files` and `/v1/files/copy` must present a
+    matching `Authorization: Bearer <token>` header. `/`,
+    `/health`, and `/api` remain public because reverse-proxy
+    liveness / discovery expects them to.
+  - `trust_network` (bool, default false) — suppresses the boot
+    WARN about an unauth non-loopback listener; set only when a
+    reverse proxy already authenticates every request before it
+    reaches FileFerry.
+  - Comparison is constant-time via the `subtle` crate; the token
+    value is never echoed to logs (redacted `Debug` on
+    `SecurityConfig`).
+  - Backwards-compatible: absent `security:` block ↔ pre-auth
+    behaviour.
+
 ### Security
 
 - **FN4 — Shipped compose rootfs writable (h2ck.me v1 runtime

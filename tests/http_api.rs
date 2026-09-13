@@ -16,7 +16,7 @@ use tower::ServiceExt;
 
 use fileferry::backend::fs::FsBackend;
 use fileferry::backend::{BackendRef, Backends};
-use fileferry::config::{AppConfig, FsConfig};
+use fileferry::config::{AppConfig, FsConfig, SecurityConfig};
 use fileferry::router::{build_router, AppState};
 
 fn app_state_with_fs_only(root: &std::path::Path) -> AppState {
@@ -884,4 +884,138 @@ async fn copy_enforces_max_response_bytes() {
         StatusCode::INTERNAL_SERVER_ERROR,
         "size cap should fail the copy"
     );
+}
+
+// ----- inter-service auth (F-FF-1 / F-FF-2 / F-FF-3) --------------
+
+fn app_state_with_auth(root: &std::path::Path, token: &str) -> AppState {
+    let fs: BackendRef = Arc::new(
+        FsBackend::new(&FsConfig {
+            data_directory: root.to_path_buf(),
+        })
+        .unwrap(),
+    );
+    let cfg = AppConfig {
+        security: SecurityConfig {
+            inter_service_token: Some(token.to_string()),
+            trust_network: false,
+        },
+        ..AppConfig::default()
+    };
+    AppState {
+        backends: Backends { fs, s3: None },
+        config: Arc::new(cfg),
+    }
+}
+
+#[tokio::test]
+async fn auth_off_by_default_list_still_open() {
+    let tmp = TempDir::new().unwrap();
+    let app = build_router(app_state_with_fs_only(tmp.path()));
+    let resp = app
+        .oneshot(
+            Request::get("/v1/files?type=FS")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::OK,
+        "no token configured → gate is off"
+    );
+}
+
+#[tokio::test]
+async fn auth_required_list_rejects_missing_bearer() {
+    let tmp = TempDir::new().unwrap();
+    let app = build_router(app_state_with_auth(tmp.path(), "supersecret-token"));
+    let resp = app
+        .oneshot(
+            Request::get("/v1/files?type=FS")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+    let json = parse_json(resp.into_body()).await;
+    assert_eq!(json.get("error").unwrap(), "unauthorized");
+}
+
+#[tokio::test]
+async fn auth_required_list_rejects_wrong_bearer() {
+    let tmp = TempDir::new().unwrap();
+    let app = build_router(app_state_with_auth(tmp.path(), "supersecret-token"));
+    let resp = app
+        .oneshot(
+            Request::get("/v1/files?type=FS")
+                .header("Authorization", "Bearer wrong-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn auth_required_list_accepts_correct_bearer() {
+    let tmp = TempDir::new().unwrap();
+    let app = build_router(app_state_with_auth(tmp.path(), "supersecret-token"));
+    let resp = app
+        .oneshot(
+            Request::get("/v1/files?type=FS")
+                .header("Authorization", "Bearer supersecret-token")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::OK);
+}
+
+#[tokio::test]
+async fn auth_required_copy_rejects_missing_bearer() {
+    let tmp = TempDir::new().unwrap();
+    let app = build_router(app_state_with_auth(tmp.path(), "supersecret-token"));
+    let body = json!({
+        "sourceStorageType": "FS",
+        "sourceFilePath": "a.txt",
+        "destinationStorageType": "S3",
+        "destinationFilePath": "b.txt"
+    });
+    let resp = app
+        .oneshot(
+            Request::post("/v1/files/copy")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+}
+
+#[tokio::test]
+async fn auth_required_health_root_and_api_still_open() {
+    // F-FF-3 nuance: `/api` remains public in this feature (see
+    // SecurityConfig doc) because reverse-proxy discovery expects it.
+    // `/`, `/health` MUST always be public.
+    let tmp = TempDir::new().unwrap();
+    let app_state = app_state_with_auth(tmp.path(), "supersecret-token");
+    let app = build_router(app_state);
+    for path in ["/", "/health", "/api"] {
+        let resp = app
+            .clone()
+            .oneshot(Request::get(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "public route {path} must not require bearer"
+        );
+    }
 }

@@ -42,3 +42,17 @@ limits:
   max_request_bytes: 33554432        # 32 MiB — file uploads via POST /v1/files/copy carry only JSON metadata
   max_response_bytes: 5368709120     # 5 GiB — upper bound on a single-object download stream
   request_timeout_secs: 300          # 5 min — large-file transfers dominate; per-op cap
+
+# Optional inter-service bearer-token gate on /v1/files*.
+# See SECURITY.md and h2ck.me v1 F-FF-1 / F-FF-2.
+#
+# security:
+#   # Env var name whose value is the bearer token clients must present
+#   # as `Authorization: Bearer <token>`. Absent = gate off (backwards-
+#   # compatible with pre-auth deployments). Comparison is
+#   # constant-time; log lines never echo the token.
+#   inter_service_token_env: FILEFERRY_INTER_SERVICE_TOKEN
+#   # Suppress the boot WARN about an unauth non-loopback listener.
+#   # Only set this when a reverse proxy / service mesh already
+#   # authenticates every request before it reaches FileFerry.
+#   trust_network: false

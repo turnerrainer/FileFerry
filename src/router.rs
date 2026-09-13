@@ -11,6 +11,7 @@ use serde_json::json;
 use tower::ServiceBuilder;
 use tower_http::trace::TraceLayer;
 
+use crate::auth::require_bearer;
 use crate::backend::{stream_copy, Backends, ListOptions, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT};
 use crate::config::AppConfig;
 use crate::error::FerryError;
@@ -35,12 +36,25 @@ pub fn build_router(state: AppState) -> Router {
         .unwrap_or(usize::MAX);
     let timeout = Duration::from_secs(state.config.limits.request_timeout_secs);
 
+    // Gated routes — touch a backend AND therefore need to be behind
+    // the optional inter-service bearer token when configured.
+    // See src/auth.rs and h2ck.me F-FF-1 / F-FF-2.
+    let gated = Router::new()
+        .route("/v1/files", get(list_files))
+        .route("/v1/files/copy", post(copy_file))
+        .layer(axum::middleware::from_fn_with_state(
+            state.clone(),
+            require_bearer,
+        ));
+
+    // Always-open routes — service banner, liveness, and (optional)
+    // OpenAPI summary. `/api` respects `documentation_enabled`; the
+    // liveness probe from a reverse proxy still needs `/health` unauth.
     let api = Router::new()
         .route("/", get(root))
         .route("/health", get(health))
         .route("/api", get(openapi))
-        .route("/v1/files", get(list_files))
-        .route("/v1/files/copy", post(copy_file));
+        .merge(gated);
 
     api.layer(
         ServiceBuilder::new()
