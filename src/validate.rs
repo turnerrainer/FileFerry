@@ -35,11 +35,13 @@ pub fn validate_path(path: &str) -> Result<(), FerryError> {
 }
 
 fn is_traversal(path: &str) -> bool {
-    // Any segment that is exactly ".." is a traversal attempt. Doing this
-    // segment-wise (not just substring match on "../") also catches paths
-    // like `foo/..` and `../` at the very start, and doesn't false-positive
-    // on filenames like `foo..bar` or `..hidden`.
-    path.split('/').any(|seg| seg == "..")
+    // Any segment that is exactly ".." OR "." is rejected. Doing this
+    // segment-wise (not just substring match) catches `foo/..`, `../` at
+    // the start, and the bare `.` case that previously bypassed the
+    // check and hit the FS with EISDIR (h2ck.me v1 finding FN1).
+    // `.hidden` / `..hidden` filenames stay accepted — the comparison is
+    // exact segment, not prefix.
+    path.split('/').any(|seg| seg == ".." || seg == ".")
 }
 
 #[cfg(test)]
@@ -76,6 +78,20 @@ mod tests {
             "./..",
             "a/b/../c",
         ] {
+            assert!(
+                matches!(validate_path(p), Err(FerryError::InvalidPath(_))),
+                "{p:?} should be rejected"
+            );
+        }
+    }
+
+    #[test]
+    fn rejects_bare_dot_and_dot_segments() {
+        // FN1 (h2ck.me v1): a bare `.` used to sail past validation and
+        // hit the FS as the data-dir itself, leaking `os error 21` in a
+        // 500 body. The rejection must be segment-exact, not "starts with
+        // dot", so `.hidden` still passes.
+        for p in [".", "./", "/.", "a/./b", "foo/.", "./foo", "a/.", "."] {
             assert!(
                 matches!(validate_path(p), Err(FerryError::InvalidPath(_))),
                 "{p:?} should be rejected"
