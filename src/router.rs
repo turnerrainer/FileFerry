@@ -16,6 +16,7 @@ use crate::config::AppConfig;
 use crate::error::FerryError;
 use crate::extract::{TypedJson, TypedQuery};
 use crate::model::{CopyFileRequest, ListFilesMeta, ListFilesQuery, ListFilesResponse};
+use crate::security_headers::security_headers;
 use crate::validate::validate_path;
 
 #[derive(Clone)]
@@ -43,6 +44,10 @@ pub fn build_router(state: AppState) -> Router {
     api.layer(
         ServiceBuilder::new()
             .layer(TraceLayer::new_for_http())
+            // Fleet stronghold §5.1: default security headers on every
+            // response — belt-and-braces even when a reverse proxy
+            // already sets them.
+            .layer(axum::middleware::from_fn(security_headers))
             // Inbound body cap. Files themselves are transferred
             // backend↔backend inside the handler — the HTTP body
             // only carries request metadata (JSON) — so the cap

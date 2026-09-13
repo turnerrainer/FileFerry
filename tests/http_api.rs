@@ -51,6 +51,45 @@ async fn root_returns_banner() {
 }
 
 #[tokio::test]
+async fn every_response_carries_security_headers() {
+    // Fleet stronghold §5.1: every response must have the five default
+    // security headers. Sample the public routes (200) AND an error
+    // response (400) to confirm the middleware wraps both branches.
+    let tmp = TempDir::new().unwrap();
+    let app = build_router(app_state_with_fs_only(tmp.path()));
+    let paths = ["/", "/health", "/api"];
+    for path in paths {
+        let resp = app
+            .clone()
+            .oneshot(Request::get(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        for expected in [
+            "content-security-policy",
+            "strict-transport-security",
+            "x-frame-options",
+            "x-content-type-options",
+            "referrer-policy",
+        ] {
+            assert!(
+                resp.headers().get(expected).is_some(),
+                "{path} response missing header {expected}"
+            );
+        }
+    }
+    // Error path (400 → missing ?type=).
+    let err_resp = app
+        .oneshot(Request::get("/v1/files").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(err_resp.status(), StatusCode::BAD_REQUEST);
+    assert!(
+        err_resp.headers().get("x-content-type-options").is_some(),
+        "error responses must also carry security headers"
+    );
+}
+
+#[tokio::test]
 async fn health_returns_ok() {
     let tmp = TempDir::new().unwrap();
     let app = build_router(app_state_with_fs_only(tmp.path()));
