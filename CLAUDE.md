@@ -17,16 +17,22 @@ spot configs that break under the current release.
   branch. Feature work goes on `feat/*`, `fix/*`,
   `hardening/*`, etc. — PR into `dev`. Release cuts are a
   `release/*` PR that bumps `Cargo.toml` and lands on `dev`.
-  **Merging a version-bump PR into `dev` is the release
-  trigger** — `publish.yml`'s `tag-on-version-bump` job reads
-  the version from `Cargo.toml`, exits idempotently if the
-  matching `v<version>` tag already exists (feature merges cost
-  nothing beyond a quick `ls-remote`), otherwise tags the merge
-  commit and pushes the tag. The tag push runs the `publish`
-  job under the `production` GitHub Environment, which requires
-  a maintainer's approval before any image ships. Two human
-  touchpoints: (1) merge the release PR, (2) approve the
-  deploy. Agents never do either.
+  **Merging a version-bump PR into `dev` runs the release to
+  completion unmanned** — `publish.yml`'s
+  `tag-on-version-bump` job reads the version from
+  `Cargo.toml`, short-circuits when the matching `v<version>`
+  tag AND a GitHub Release both exist (feature merges cost
+  nothing beyond a quick `ls-remote` + `gh release view`),
+  otherwise tags the merge commit (if needed) and dispatches
+  `publish`. `publish` builds multi-arch images, runs Trivy +
+  cosign, creates the GitHub Release entry, and verifies it
+  landed — no Actions-UI approval step. The single human
+  touchpoint is the PR review + merge; the safety gates are
+  the PR review itself plus the workflow-internal ones (Trivy
+  blocks on HIGH/CRITICAL, `/health` smoke test must pass,
+  cosign signing must succeed, Release-verify step confirms
+  the entry landed). Agents never bump the version, never
+  tag, never merge release PRs.
   (There is no `main` branch on origin; the earlier convention
   "release cuts merge `dev → main`" was never implemented and
   has been retired in favour of the model above.)
@@ -248,10 +254,15 @@ not weaken it): `read_only: true` rootfs, `no-new-privileges: true`,
   The `access_log` middleware wraps the whole thing. If you insert
   a new layer, name the intended position in the commit message.
 - **Never bump the top-level project version, never tag, never
-  dispatch the publish workflow.** Releases are cut by the
-  maintainer as a dedicated `chore(release)` commit merged from a
-  `release/*` branch, and the maintainer approves the deploy in the
-  `production` GH Environment. **Agents do neither on their own.**
+  dispatch the publish workflow, never merge a release PR.**
+  Releases are cut by the maintainer as a dedicated
+  `chore(release)` commit on a `release/*` branch. When the
+  maintainer merges the PR into `dev`, `publish.yml` runs the
+  full pipeline unmanned (Trivy + cosign + Release entry +
+  verify) — no separate Actions-UI approval. The workflow-
+  internal gates (Trivy blocks HIGH/CRITICAL, `/health` smoke
+  test, cosign, Release-verify) are the deploy safety net.
+  **Agents don't participate in any of this on their own.**
 - **When adding a config field**: (a) update the runtime struct in
   `src/config.rs`, (b) mirror in the `*Yaml` shape with
   `deny_unknown_fields`, (c) resolve in `from_yaml`, (d) add a

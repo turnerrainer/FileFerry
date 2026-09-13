@@ -90,8 +90,11 @@ seams that also still apply (also documented in
   `may not start with '/'` → rewrite the prefix (e.g. `prefix/`).
 - `Backend::list` signature changed to take a `ListOptions { limit,
   start_after }` — out-of-tree implementations must match.
-- Publish workflow waits for a reviewer in the `production` GitHub
-  Environment.
+- Publish workflow now runs unmanned on merge of a version-bump PR
+  into `dev` — no Actions-UI approval step. The PR review + merge
+  is the deploy approval; workflow-internal gates (Trivy on
+  HIGH/CRITICAL, `/health` smoke test, cosign signing,
+  Release-verify) are the safety net.
 
 ## Documentation
 
