@@ -122,24 +122,44 @@ jobs:
           echo "tag_ref=${TAG_REF}"  >> "$GITHUB_OUTPUT"
           echo "Derived tag: ${TAG_REF} (from Cargo.toml version=${VERSION})"
 
-      - name: Skip if release tag already exists
+      # Two independent signals decide the flow. The tag existing is
+      # NOT enough to conclude "already shipped" — a prior run may
+      # have tagged but never dispatched `publish` (e.g. because of
+      # the recursion guard fixed in PR #20), leaving the tag
+      # orphaned. Only "tag AND Release both exist" means the
+      # release fully shipped and we can safely no-op.
+      - name: Detect tag + Release existence
         id: exists
         env:
+          GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_REF: ${{ steps.version.outputs.tag_ref }}
+          REPO: ${{ github.repository }}
         run: |
           set -euo pipefail
-          if git rev-parse --verify --quiet "refs/tags/${TAG_REF}" >/dev/null \
-             || git ls-remote --exit-code --tags origin "refs/tags/${TAG_REF}" >/dev/null 2>&1
-          then
-            echo "::notice::${TAG_REF} already exists — release already shipped for this version; nothing to do."
-            echo "already_shipped=true" >> "$GITHUB_OUTPUT"
+          if git ls-remote --exit-code --tags origin "refs/tags/${TAG_REF}" >/dev/null 2>&1; then
+            tag_exists=true
           else
-            echo "already_shipped=false" >> "$GITHUB_OUTPUT"
+            tag_exists=false
+          fi
+          if gh release view "${TAG_REF}" --repo "${REPO}" >/dev/null 2>&1; then
+            release_exists=true
+          else
+            release_exists=false
+          fi
+          echo "tag_exists=${tag_exists}"         >> "$GITHUB_OUTPUT"
+          echo "release_exists=${release_exists}" >> "$GITHUB_OUTPUT"
+          echo "Detected: tag=${tag_exists}, release=${release_exists}"
+          if [ "${tag_exists}" = "true" ] && [ "${release_exists}" = "true" ]; then
+            echo "::notice::${TAG_REF} already shipped (tag + Release both present); nothing to do."
+          elif [ "${tag_exists}" = "true" ] && [ "${release_exists}" = "false" ]; then
+            echo "::notice::${TAG_REF} tag exists but has no GitHub Release yet — will dispatch publish to complete the release."
           fi
 
-      # Only create + push the tag if it doesn't already exist.
+      # Create the tag only when it doesn't exist. When the tag
+      # exists but the Release doesn't (partial-shipment / rerun),
+      # skip this step and jump straight to the dispatch below.
       - name: Create and push release tag
-        if: steps.exists.outputs.already_shipped == 'false'
+        if: steps.exists.outputs.tag_exists == 'false'
         env:
           TAG_REF: ${{ steps.version.outputs.tag_ref }}
           VERSION: ${{ steps.version.outputs.version }}
@@ -163,12 +183,17 @@ jobs:
       # are the ONE exception the recursion guard allows for
       # GITHUB_TOKEN, so we use it to bridge the gap.
       #
+      # Fires in TWO scenarios:
+      #   1. We just created the tag (fresh release) — always dispatch.
+      #   2. The tag existed but had no Release — dispatch to finish
+      #      shipping a partial release from a prior failed run.
+      #
       # The dispatched run enters `publish` with `inputs.tag=$TAG`
       # (path 3 in the on: block), which correctly checks out the
       # tag ref, runs Trivy + smoke tests + cosign, and creates the
       # GitHub Release entry.
-      - name: Dispatch publish workflow on the new tag
-        if: steps.exists.outputs.already_shipped == 'false'
+      - name: Dispatch publish workflow on the tag
+        if: steps.exists.outputs.release_exists == 'false'
         env:
           GH_TOKEN: ${{ secrets.GITHUB_TOKEN }}
           TAG_REF: ${{ steps.version.outputs.tag_ref }}
