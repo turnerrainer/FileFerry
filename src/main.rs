@@ -6,10 +6,12 @@ use anyhow::Context;
 use tracing_subscriber::EnvFilter;
 
 use fileferry::backend::fs::FsBackend;
+use fileferry::backend::offline::{offline_from_env, OfflineBackend};
 use fileferry::backend::s3::S3Backend;
 use fileferry::backend::{BackendRef, Backends};
 use fileferry::config;
 use fileferry::diagnose;
+use fileferry::model::StorageType;
 use fileferry::router::{build_router, AppState};
 
 #[tokio::main]
@@ -33,9 +35,28 @@ async fn main() -> anyhow::Result<()> {
 
     let fs_backend: BackendRef =
         Arc::new(FsBackend::new(&cfg.fs).context("initialising FS backend")?);
+    // Fleet stronghold §9.1: `FILEFERRY_OFFLINE=1` (or `true` / `yes`)
+    // replaces the S3 backend with a stub that fails every call with
+    // `Upstream("offline mode: ...")`. Never accidentally hit a live
+    // upstream during a pentest / break-test session. FS stays real
+    // because it doesn't leave the process.
+    let offline = offline_from_env();
     let s3_backend: Option<BackendRef> = if let Some(s3_cfg) = &cfg.s3 {
-        Some(Arc::new(S3Backend::new(s3_cfg).await?))
+        if offline {
+            tracing::warn!(
+                "FILEFERRY_OFFLINE is set — S3 backend is stubbed; every outbound call \
+                 returns Upstream(\"offline mode\") without contacting AWS/MinIO"
+            );
+            Some(Arc::new(OfflineBackend::new(StorageType::S3)))
+        } else {
+            Some(Arc::new(S3Backend::new(s3_cfg).await?))
+        }
     } else {
+        if offline {
+            tracing::info!(
+                "FILEFERRY_OFFLINE is set but no s3: block configured — nothing to stub"
+            );
+        }
         None
     };
     let backends = Backends {
