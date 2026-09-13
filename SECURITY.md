@@ -126,3 +126,55 @@ release. Each was reviewed in the v1 audit (`h2ck.me/projects/FileFerry/v1/AUDIT
   compressed source cannot amplify past the configured cap. If a
   future change enables client-side gzip decoding, revisit
   `LimitedReader` placement to keep the cap on decoded bytes.
+
+## Post-0.1.3-alpha hardening (landed on `dev`, unreleased)
+
+Additive hardening from the h2ck.me v1 break-tests and the
+fleet-wide `FLEET-STRONGHOLDS.md`. All backwards-compatible with
+existing configs unless noted.
+
+- **Optional inter-service bearer gate.** New `security:` YAML
+  block. When `inter_service_token_env` names a live env var,
+  `/v1/files` and `/v1/files/copy` require
+  `Authorization: Bearer <token>`. Comparison is constant-time via
+  `subtle`; token value is never logged (`SecurityConfig` has a
+  masked `Debug`). `/`, `/health`, `/api` remain public. Boot
+  emits a WARN when the listener is non-loopback, no bearer is
+  configured, AND `security.trust_network=false` — names the
+  concrete impact (S3 API cost, cross-backend exfil).
+- **Structured JSON on every 4xx / 5xx.** Malformed queries,
+  malformed bodies, oversize bodies, and 401 all return the same
+  `{error, message}` envelope. No bare `text/plain` errors.
+- **`deny_unknown_fields` on request DTOs.** Junk keys in a copy
+  request or list query are refused instead of silently dropped.
+- **`FerryError::NotFound` no longer echoes the requested path.**
+  Fixed message string; full path stays in the WARN log for
+  operator debugging.
+- **Path validator rejects bare `.` and `.` segments.** Prevents
+  the "`os error 21`" leak from a `sourceFilePath: "."` probe.
+- **Five default response security headers** — CSP, HSTS,
+  X-Frame-Options, X-Content-Type-Options, Referrer-Policy — on
+  every response, belt-and-braces against reverse-proxy
+  misconfiguration.
+- **W3C `traceparent` + `x-trace-id` on every response.**
+  Callers who send a valid inbound `traceparent` have the same
+  `trace_id` echoed back for cross-service log correlation.
+- **Container rootfs is `read_only: true`.** Shipped
+  `docker-compose.yml` mounts the writable data path on a named
+  volume `fileferry_data:/app/data:rw` so a shell-level RCE cannot
+  overwrite `/app/fileferry` or drop a shared library.
+- **Copy-audit log hashes source/destination paths.** The
+  `file_transfer_completed` INFO line carries `source_path_hash`
+  and `destination_path_hash` (first 12 hex of SHA-256) instead of
+  raw paths, so tenant identifiers (e.g. `/opt/tenant-A/…`) never
+  land in log shippers or SIEM tools. Now also emits
+  `duration_ms` and `outcome`.
+- **`FILEFERRY_OFFLINE=1` stubs S3 outbound.** Pentest / break-tests
+  cannot accidentally reach real S3 — every S3 call fails with
+  `502 upstream_error: offline mode: outbound blocked by
+  FILEFERRY_OFFLINE`. FS backend is unaffected.
+- **Log stream contains 0 ANSI ESC bytes under Docker / systemd.**
+  Auto-detected via `atty`; overridable with `LOG_ANSI=1`.
+- **Access-log middleware** emits one INFO
+  `http_request_completed` line per request, inheriting `trace_id`
+  from an inbound `traceparent` when present.
