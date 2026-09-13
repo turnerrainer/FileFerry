@@ -45,10 +45,10 @@ FileFerry rejects any path that:
 - contains any character outside `[0-9 a-z A-Z - . _ /]`
 - contains a segment equal to `.` or `..` (traversal / self-reference)
 
-The bare-`.` rejection was added in the post-0.1.3-alpha hardening
-pass; before that, `sourceFilePath: "."` resolved to the data
-directory itself and leaked `500 io_error: Is a directory (os
-error 21)` back to the caller. The validator now catches `.` and
+The bare-`.` rejection was added in `0.2.0-alpha`; in
+`0.1.3-alpha` and earlier, `sourceFilePath: "."` resolved to the
+data directory itself and leaked
+`500 io_error: Is a directory (os error 21)` back to the caller. The validator now catches `.` and
 `./`, `/.`, `a/./b`, `foo/.`, `./foo` alongside the existing `..`
 patterns. `.hidden` / `..hidden` **filenames** stay valid — the
 check is segment-exact, not prefix.

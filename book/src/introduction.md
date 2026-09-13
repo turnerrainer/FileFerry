@@ -1,6 +1,6 @@
 # FileFerry
 
-**Version:** 0.1.3-alpha · **License:** Apache-2.0
+**Version:** 0.2.0-alpha · **License:** Apache-2.0
 
 FileFerry is a small HTTP service that brokers file transfers
 between a local filesystem and an S3-compatible object store. It
@@ -53,8 +53,13 @@ Response: `HTTP/1.1 204 No Content`.
 
 FileFerry brokers transfers. It does not:
 
-- Authenticate or authorise callers (terminate at a reverse proxy)
-- Provide rate limiting (same)
+- Authenticate or authorise callers as a hard requirement —
+  though `0.2.0-alpha` ships an *optional* inter-service bearer
+  gate for the backend-touching routes (see
+  [Configuration](./configuration.md) `security:` block). The
+  fleet posture is still to terminate at a reverse proxy; the
+  bearer gate is defence-in-depth.
+- Provide rate limiting (terminate at reverse proxy)
 - Track file versions
 - Do image/video/document processing
 - Support nested directories in `list` (root-level only, matching

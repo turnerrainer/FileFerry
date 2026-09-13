@@ -4,11 +4,15 @@ Read this file before you touch anything in `turnerrainer/fileferry`. It
 is the agent-facing brief: what to run, what to preserve, and how to
 spot configs that break under the current release.
 
-- **Current release**: `0.1.3-alpha`. `dev` carries the post-h2ck.me-v1
-  hardening pass (§2 + §3 below); the next release will bump the
-  PATCH digit and cut a `chore(release)` commit — **the maintainer
-  decides when; agents never bump the top-level version, never tag,
-  never dispatch the publish workflow.**
+- **Current release**: `0.2.0-alpha`. The MINOR bump vs
+  `0.1.3-alpha` reflects a new `security:` config axis, a new
+  `FILEFERRY_OFFLINE` runtime axis, breaking wire changes to the
+  audit-log line, and breaking response-body-shape changes for
+  extractor rejections — see `CHANGELOG.md` `[0.2.0-alpha]` and
+  §3 below. **Agents never bump the top-level version, never
+  tag, never dispatch the publish workflow.** Releases are cut
+  by the maintainer as a dedicated `chore(release)` commit
+  merged from a `release/*` branch.
 - **Branches**: work on `dev`, PR into `dev`, release cuts merge `dev → main`.
 - **Companion files**: `README.md` (user-facing quickstart),
   `SECURITY.md` (disclosure + posture), `STANDARDS.md` (build/test/publish
@@ -25,9 +29,9 @@ cargo audit --deny warnings
 cargo deny check all
 ```
 
-Baseline on `dev` after the 2026-09-13 hardening pass:
-**82/82 tests pass** (48 unit + 2 compat + 32 integration). Clippy,
-audit, and deny are all clean. If your change reduces the test count
+Baseline on the `0.2.0-alpha` release commit: **82/82 tests
+pass** (48 unit + 2 compat + 32 integration). Clippy, audit,
+and deny are all clean. If your change reduces the test count
 or introduces a warning, that is a regression — fix it before opening
 the PR.
 
@@ -81,11 +85,11 @@ then decide.
 If a reviewer or audit asks you to "just relax" one of these, push
 back — they were designed to catch attempts to remove them.
 
-## 3. Breaking changes vs `0.1.3-alpha` (in-progress `[Unreleased]`)
+## 3. Breaking changes vs `0.1.3-alpha` (shipped in `0.2.0-alpha`)
 
 If you are upgrading callers, custom backends, or CI configs from
 `0.1.3-alpha`, these are the seams to check. Full narrative:
-`CHANGELOG.md` `[Unreleased]`.
+`CHANGELOG.md` `[0.2.0-alpha]`.
 
 | # | Change | Grep to find affected sites | Fix |
 |---|---|---|---|
@@ -250,6 +254,13 @@ not weaken it): `read_only: true` rootfs, `no-new-privileges: true`,
 - **Original S3-Ferry** — <https://github.com/buerokratt/S3-Ferry>.
 - **Book (rendered)** — <https://turnerrainer.github.io/fileferry/>.
 - **Images** — `docker.io/turnerrainer/fileferry:alpha` (moving
-  alpha tag) and `ghcr.io/turnerrainer/fileferry:alpha`. Immutable
-  digest tags: `:0.1.3-alpha`. The next release will add its own
-  immutable digest; the maintainer will decide the version bump.
+  alpha tag) and `ghcr.io/turnerrainer/fileferry:alpha`. Latest
+  immutable version tag: `:0.2.0-alpha` (prior: `:0.1.3-alpha`,
+  `:0.1.0-alpha.2`, `:0.1.0-alpha.1`). Every tag is signed via
+  cosign keyless (Sigstore OIDC) and carries in-toto provenance
+  + SPDX SBOM attestations.
+- **Releases** — <https://github.com/turnerrainer/FileFerry/releases>.
+  The `publish.yml` workflow creates a GitHub Release entry as
+  part of every tag push, populated from the matching
+  `CHANGELOG.md` section. Pre-release tags (any tag with a
+  `-<suffix>`) are marked `prerelease: true`.
