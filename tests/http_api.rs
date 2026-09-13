@@ -249,6 +249,40 @@ async fn copy_rejects_null_byte_path() {
 }
 
 #[tokio::test]
+async fn copy_rejects_bare_dot_source_path() {
+    // FN1 regression (h2ck.me v1 runtime break-tests): a bare `.` used
+    // to bypass validate_path and hit the FS as the data directory
+    // itself, returning 500 with a raw OS error 21 (EISDIR) message.
+    // Post-fix the validator refuses `.` at the boundary → structured
+    // 400 invalid_path.
+    let tmp = TempDir::new().unwrap();
+    let app = build_router(app_state_with_fs_only(tmp.path()));
+    let body = json!({
+        "sourceStorageType": "FS",
+        "sourceFilePath": ".",
+        "destinationStorageType": "S3",
+        "destinationFilePath": "leak.txt"
+    });
+    let resp = app
+        .oneshot(
+            Request::post("/v1/files/copy")
+                .header("content-type", "application/json")
+                .body(Body::from(body.to_string()))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let json = parse_json(resp.into_body()).await;
+    assert_eq!(json.get("error").unwrap(), "invalid_path");
+    let msg = json.get("message").unwrap().as_str().unwrap();
+    assert!(
+        !msg.contains("os error"),
+        "response must not leak raw OS error: {msg}"
+    );
+}
+
+#[tokio::test]
 async fn copy_source_not_found_maps_to_404() {
     let tmp = TempDir::new().unwrap();
     // Enable a "fake S3" as destination via a second FsBackend so the
