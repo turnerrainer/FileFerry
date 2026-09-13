@@ -39,7 +39,10 @@ concurrency:
   cancel-in-progress: false
 
 permissions:
-  contents: read
+  # `contents: write` is required so the final step can create the
+  # GitHub Release entry (populated from the matching CHANGELOG.md
+  # section). No other step writes to the repo.
+  contents: write
   packages: write
   id-token: write
   attestations: write
@@ -224,3 +227,60 @@ jobs:
             echo "Signing ${registry_image}@${DIGEST}"
             cosign sign --yes "${registry_image}@${DIGEST}"
           done
+
+      # Extract the CHANGELOG.md slice matching the tag we're publishing
+      # so the GitHub Release body reads like the release notes and not
+      # like a hand-written blob that can drift from CHANGELOG.md. The
+      # awk block matches `## [VERSION]` (with or without a date suffix)
+      # and stops at the next `## [` heading.
+      - name: Extract CHANGELOG slice for this release
+        id: notes
+        env:
+          VERSION: ${{ steps.meta.outputs.version }}
+        run: |
+          set -euo pipefail
+          slice="$(awk -v ver="$VERSION" '
+            /^## \[/ {
+              if (in_section) exit
+              # Match `## [VERSION]` at the start of the line, tolerant
+              # of optional ` - YYYY-MM-DD` suffixes.
+              if ($0 ~ "^## \\[" ver "\\]") {
+                in_section = 1
+                next
+              }
+            }
+            in_section { print }
+          ' CHANGELOG.md)"
+          if [ -z "$slice" ]; then
+            echo "::warning::CHANGELOG.md has no [$VERSION] section — Release body will be empty"
+          fi
+          {
+            echo "body<<END_OF_NOTES"
+            printf '%s\n' "$slice"
+            echo ""
+            echo "---"
+            echo ""
+            echo "**Container images** (signed via cosign keyless, in-toto + SPDX SBOM attached):"
+            echo ""
+            echo "- \`ghcr.io/turnerrainer/fileferry:${VERSION}\`"
+            echo "- \`docker.io/turnerrainer/fileferry:${VERSION}\`"
+            echo ""
+            echo "Verify: \`cosign verify ghcr.io/turnerrainer/fileferry:${VERSION} --certificate-identity-regexp '.*' --certificate-oidc-issuer https://token.actions.githubusercontent.com\`"
+            echo "END_OF_NOTES"
+          } >> "$GITHUB_OUTPUT"
+
+      # Create (or update) the GitHub Release entry for this tag. Runs
+      # after signing so a signed image is always visible on the
+      # Releases page; if signing failed the workflow aborts before
+      # this step so we never publish a Release for an unverified
+      # image. `prerelease` is derived from the tag (any tag with a
+      # `-<suffix>` is a pre-release per `steps.meta`).
+      - name: Create GitHub Release
+        uses: softprops/action-gh-release@v2
+        with:
+          tag_name: ${{ github.event.inputs.tag || github.ref_name }}
+          name: "FileFerry ${{ github.event.inputs.tag || github.ref_name }}"
+          body: ${{ steps.notes.outputs.body }}
+          prerelease: ${{ steps.meta.outputs.prerelease }}
+          make_latest: ${{ steps.meta.outputs.prerelease == 'false' }}
+          fail_on_unmatched_files: false
