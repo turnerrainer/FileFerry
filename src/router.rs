@@ -1,7 +1,7 @@
 use std::sync::Arc;
 use std::time::Duration;
 
-use axum::extract::{Query, State};
+use axum::extract::{DefaultBodyLimit, State};
 use axum::http::StatusCode;
 use axum::response::IntoResponse;
 use axum::routing::{get, post};
@@ -9,12 +9,12 @@ use axum::Json;
 use axum::Router;
 use serde_json::json;
 use tower::ServiceBuilder;
-use tower_http::limit::RequestBodyLimitLayer;
 use tower_http::trace::TraceLayer;
 
 use crate::backend::{stream_copy, Backends, ListOptions, DEFAULT_LIST_LIMIT, MAX_LIST_LIMIT};
 use crate::config::AppConfig;
 use crate::error::FerryError;
+use crate::extract::{TypedJson, TypedQuery};
 use crate::model::{CopyFileRequest, ListFilesMeta, ListFilesQuery, ListFilesResponse};
 use crate::validate::validate_path;
 
@@ -46,8 +46,12 @@ pub fn build_router(state: AppState) -> Router {
             // Inbound body cap. Files themselves are transferred
             // backend↔backend inside the handler — the HTTP body
             // only carries request metadata (JSON) — so the cap
-            // can be relatively small.
-            .layer(RequestBodyLimitLayer::new(max_body))
+            // can be relatively small. FN2: use `DefaultBodyLimit`
+            // (extractor-side) rather than tower's `RequestBodyLimitLayer`
+            // so oversize bodies surface via `TypedJson`'s
+            // `FerryError::BodyTooLarge` (structured 413 JSON) instead
+            // of a bare `text/plain` "length limit exceeded".
+            .layer(DefaultBodyLimit::max(max_body))
             .layer(tower_http::timeout::TimeoutLayer::new(timeout)),
     )
     // Audit LOG-v1 FN-LOG-3: emit one INFO line per completed request
@@ -137,7 +141,7 @@ async fn openapi(State(state): State<AppState>) -> impl IntoResponse {
 
 async fn list_files(
     State(state): State<AppState>,
-    Query(q): Query<ListFilesQuery>,
+    TypedQuery(q): TypedQuery<ListFilesQuery>,
 ) -> Result<Json<ListFilesResponse>, FerryError> {
     let backend = state.backends.pick(q.storage_type)?;
     // F4: cap the client-requested `limit`. Values above MAX_LIST_LIMIT
@@ -182,7 +186,7 @@ async fn list_files(
 
 async fn copy_file(
     State(state): State<AppState>,
-    Json(req): Json<CopyFileRequest>,
+    TypedJson(req): TypedJson<CopyFileRequest>,
 ) -> Result<StatusCode, FerryError> {
     if req.source_storage_type == req.destination_storage_type {
         return Err(FerryError::SameStorageType);

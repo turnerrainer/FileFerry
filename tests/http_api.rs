@@ -161,6 +161,19 @@ async fn list_missing_type_query_is_422() {
         "expected 400 for missing ?type=, got {}",
         resp.status()
     );
+    // FN2 regression: response is structured JSON, not bare text.
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        content_type.starts_with("application/json"),
+        "expected application/json, got {content_type}"
+    );
+    let json = parse_json(resp.into_body()).await;
+    assert_eq!(json.get("error").unwrap(), "bad_query");
+    assert!(json.get("message").unwrap().is_string());
 }
 
 #[tokio::test]
@@ -176,6 +189,111 @@ async fn list_bogus_type_is_400() {
         .await
         .unwrap();
     assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    // FN2 regression: structured JSON body, not bare text.
+    let json = parse_json(resp.into_body()).await;
+    assert_eq!(json.get("error").unwrap(), "bad_query");
+}
+
+#[tokio::test]
+async fn list_bad_limit_returns_structured_bad_query() {
+    // FN2 regression: previously axum returned a bare-text 400 for
+    // `limit=abc`. Now it must be structured JSON `bad_query`.
+    let tmp = TempDir::new().unwrap();
+    let app = build_router(app_state_with_fs_only(tmp.path()));
+    let resp = app
+        .oneshot(
+            Request::get("/v1/files?type=FS&limit=abc")
+                .body(Body::empty())
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        content_type.starts_with("application/json"),
+        "expected application/json, got {content_type}"
+    );
+    let json = parse_json(resp.into_body()).await;
+    assert_eq!(json.get("error").unwrap(), "bad_query");
+}
+
+#[tokio::test]
+async fn copy_malformed_json_body_returns_structured_bad_body() {
+    // FN2 regression: previously axum returned bare-text 400/415 for a
+    // malformed JSON body. Now it must be structured JSON `bad_body`.
+    let tmp = TempDir::new().unwrap();
+    let app = build_router(app_state_with_fs_only(tmp.path()));
+    let resp = app
+        .oneshot(
+            Request::post("/v1/files/copy")
+                .header("content-type", "application/json")
+                .body(Body::from("{not-json"))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::BAD_REQUEST);
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        content_type.starts_with("application/json"),
+        "expected application/json, got {content_type}"
+    );
+    let json = parse_json(resp.into_body()).await;
+    assert_eq!(json.get("error").unwrap(), "bad_body");
+}
+
+#[tokio::test]
+async fn copy_oversize_body_returns_structured_413() {
+    // FN2 regression: previously the tower `RequestBodyLimitLayer`
+    // returned bare-text 413. Now the extractor-side `DefaultBodyLimit`
+    // + `TypedJson` combo surfaces it as structured JSON `body_too_large`.
+    let tmp = TempDir::new().unwrap();
+    let mut cfg = AppConfig::default();
+    // Shrink the cap so the test body is comfortably over it.
+    cfg.limits.max_request_bytes = 1024;
+    let fs: BackendRef = Arc::new(
+        FsBackend::new(&FsConfig {
+            data_directory: tmp.path().to_path_buf(),
+        })
+        .unwrap(),
+    );
+    let state = AppState {
+        backends: Backends { fs, s3: None },
+        config: Arc::new(cfg),
+    };
+    let app = build_router(state);
+    // 16 KiB — well above the 1 KiB cap.
+    let big = vec![b'A'; 16 * 1024];
+    let resp = app
+        .oneshot(
+            Request::post("/v1/files/copy")
+                .header("content-type", "application/json")
+                .body(Body::from(big))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::PAYLOAD_TOO_LARGE);
+    let content_type = resp
+        .headers()
+        .get("content-type")
+        .and_then(|v| v.to_str().ok())
+        .unwrap_or("");
+    assert!(
+        content_type.starts_with("application/json"),
+        "expected application/json, got {content_type}"
+    );
+    let json = parse_json(resp.into_body()).await;
+    assert_eq!(json.get("error").unwrap(), "body_too_large");
 }
 
 #[tokio::test]

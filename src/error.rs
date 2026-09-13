@@ -29,6 +29,25 @@ pub enum FerryError {
     #[error("requested list limit exceeds server cap of {cap}")]
     ListLimitTooLarge { cap: usize },
 
+    /// FN2: axum's typed `Query<T>` rejection wrapped into the fleet's
+    /// structured error envelope. Kept separate from `InvalidPath` so
+    /// clients can machine-distinguish "your path failed the validator"
+    /// (`invalid_path`) from "your query string didn't deserialize"
+    /// (`bad_query`).
+    #[error("invalid query string: {0}")]
+    BadQuery(String),
+
+    /// FN2: axum's typed `Json<T>` rejection wrapped into the fleet's
+    /// structured error envelope. Covers content-type mismatch, JSON
+    /// syntax errors, missing/unknown fields.
+    #[error("invalid request body: {0}")]
+    BadBody(String),
+
+    /// FN2: request body exceeded `limits.max_request_bytes`. Emitted
+    /// as structured JSON 413 instead of tower's bare-text default.
+    #[error("request body exceeds server cap of {cap} bytes")]
+    BodyTooLarge { cap: usize },
+
     #[error("upstream storage error: {0}")]
     Upstream(String),
 
@@ -42,12 +61,15 @@ pub enum FerryError {
 impl FerryError {
     pub fn status(&self) -> StatusCode {
         match self {
-            FerryError::InvalidPath(_) | FerryError::SameStorageType => StatusCode::BAD_REQUEST,
+            FerryError::InvalidPath(_)
+            | FerryError::SameStorageType
+            | FerryError::BadQuery(_)
+            | FerryError::BadBody(_) => StatusCode::BAD_REQUEST,
             FerryError::BackendNotConfigured(_) => StatusCode::SERVICE_UNAVAILABLE,
             FerryError::NotFound(_) => StatusCode::NOT_FOUND,
-            FerryError::TransferTooLarge { .. } | FerryError::ListLimitTooLarge { .. } => {
-                StatusCode::PAYLOAD_TOO_LARGE
-            }
+            FerryError::TransferTooLarge { .. }
+            | FerryError::ListLimitTooLarge { .. }
+            | FerryError::BodyTooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
             FerryError::Upstream(_) => StatusCode::BAD_GATEWAY,
             FerryError::Io(_) | FerryError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -61,6 +83,9 @@ impl FerryError {
             FerryError::NotFound(_) => "not_found",
             FerryError::TransferTooLarge { .. } => "transfer_too_large",
             FerryError::ListLimitTooLarge { .. } => "list_limit_too_large",
+            FerryError::BadQuery(_) => "bad_query",
+            FerryError::BadBody(_) => "bad_body",
+            FerryError::BodyTooLarge { .. } => "body_too_large",
             FerryError::Upstream(_) => "upstream_error",
             FerryError::Io(_) => "io_error",
             FerryError::Internal(_) => "internal_error",
