@@ -6,21 +6,26 @@ name: Publish container image
 # to GHCR / Docker Hub without an explicit human approval in the
 # Actions UI.
 #
+# `dev` is the repo's default branch and its release branch — this
+# workflow watches `dev` directly rather than a separate `main`.
+#
 # 1. **Release-by-merge** (the primary "single-PR release" flow):
-#    Merging a `dev → main` PR runs the `tag-from-main` job. It
-#    reads the version from `Cargo.toml`, refuses to proceed if
-#    the corresponding `v<version>` tag already exists, otherwise
-#    tags the merge commit and pushes the tag. The tag push then
-#    triggers `publish` on the tag ref, which waits for the
-#    `production` environment approval. From the maintainer's
-#    perspective: merge the release PR → approve the deploy →
-#    Release entry appears at
-#    <https://github.com/turnerrainer/fileferry/releases>.
+#    Merging any PR into `dev` runs the `tag-on-version-bump` job.
+#    It reads `version` from `Cargo.toml`, exits idempotently if a
+#    matching `v<version>` tag already exists (no bump = no
+#    release), otherwise tags the merge commit and pushes the tag.
+#    The tag push then triggers `publish` on the tag ref, which
+#    waits for the `production` environment approval. From the
+#    maintainer's perspective: merge a `release/*` PR that bumps
+#    `Cargo.toml` → approve the deploy → Release entry appears at
+#    <https://github.com/turnerrainer/fileferry/releases>. Feature
+#    PRs into `dev` still fire the workflow but the job short-
+#    circuits because the version tag already exists.
 #
 # 2. **Tag-push** (the legacy / manual path):
-#    `git push origin v0.2.0-alpha` skips `tag-from-main` and
-#    triggers `publish` directly. Kept so pre-existing tags and
-#    hotfix workflows still work.
+#    `git push origin v0.2.0-alpha` skips `tag-on-version-bump`
+#    and triggers `publish` directly. Kept so pre-existing tags
+#    and hotfix workflows still work.
 #
 # 3. **workflow_dispatch** (the escape hatch):
 #    Lets a maintainer re-run `publish` against an existing tag
@@ -30,7 +35,8 @@ name: Publish container image
 #
 # Alpha versioning: PATCH-as-alpha-counter with a bare `-alpha`
 # suffix (0.1.1-alpha, 0.1.2-alpha, 0.1.3-alpha, 0.2.0-alpha, ...).
-# See CHANGELOG.md for the mapping from the old `-alpha.N` form.
+# MINOR bumps mark bigger releases (new config axis, breaking wire
+# changes) — see CHANGELOG.md for the version-bump rationale.
 #
 # Tag shapes:
 #   v0.1.0        → stable release
@@ -40,7 +46,7 @@ name: Publish container image
 # and chooses whether to move :latest and :major.minor accordingly.
 on:
   push:
-    branches: [main]
+    branches: [dev]
     tags:
       - 'v[0-9]+.[0-9]+.[0-9]+'
       - 'v[0-9]+.[0-9]+.[0-9]+-*'
@@ -51,11 +57,11 @@ on:
         required: true
         type: string
 
-# Concurrency keys on `github.ref` — so a `push:main` and a
-# subsequent `push:tag/v0.2.0-alpha` for the same release land in
-# DIFFERENT groups and can proceed serially (tag-from-main first,
-# then publish on the tag push). Two runs of the same tag / branch
-# are serialised.
+# Concurrency keys on `github.ref` — a `push:dev` and its follow-up
+# `push:tag/v0.2.0-alpha` for the same release land in DIFFERENT
+# groups and proceed serially (tag-on-version-bump first, then
+# publish on the tag push). Two runs of the same tag / branch are
+# serialised.
 concurrency:
   group: publish-${{ github.ref }}
   cancel-in-progress: false
@@ -70,20 +76,19 @@ permissions:
   attestations: write
 
 jobs:
-  # Release-by-merge entry point. Fires only on `push:main`.
-  # Reads the version from `Cargo.toml`, refuses to proceed if the
-  # corresponding `v<version>` tag already exists (release already
-  # shipped for this version — nothing to do), otherwise tags the
-  # merge commit and pushes the tag. The tag push then triggers the
-  # `publish` job below via the `push: tags:` entry.
+  # Release-by-merge entry point. Fires on every push to `dev` and
+  # short-circuits idempotently when the `v<Cargo.toml version>`
+  # tag already exists — so feature-PR merges cost only a quick
+  # `git ls-remote --exit-code`, and only a version bump results
+  # in a new tag + release.
   #
   # No `environment:` on this job — creating a tag is not a deploy.
   # The deploy gate lives on `publish`. That way a maintainer can
   # merge a release PR without immediately being asked to approve
   # a deploy; the approval happens as a separate step when the tag
   # push triggers `publish`.
-  tag-from-main:
-    if: github.event_name == 'push' && github.ref == 'refs/heads/main'
+  tag-on-version-bump:
+    if: github.event_name == 'push' && github.ref == 'refs/heads/dev'
     runs-on: ubuntu-latest
     steps:
       - name: Checkout
@@ -147,8 +152,9 @@ jobs:
           echo "::notice::Pushed ${TAG_REF} — publish workflow will run on the tag ref and wait for production-env approval."
 
   publish:
-    # Skip on `push:main` — that's `tag-from-main`'s job. Run on
-    # tag pushes (the tag `tag-from-main` just created, or an
+    # Skip on `push:dev` — that's `tag-on-version-bump`'s job.
+    # Run on tag pushes (the tag `tag-on-version-bump` just
+    # created, or an
     # externally-pushed tag) and on manual dispatch.
     if: github.event_name == 'workflow_dispatch' || startsWith(github.ref, 'refs/tags/')
     runs-on: ubuntu-latest

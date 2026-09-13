@@ -13,15 +13,23 @@ spot configs that break under the current release.
   tag, never dispatch the publish workflow.** Releases are cut
   by the maintainer as a dedicated `chore(release)` commit
   merged from a `release/*` branch.
-- **Branches**: work on `dev`, PR into `dev`, release cuts merge
-  `dev → main`. **Merging a `dev → main` PR is the release
-  trigger** — `publish.yml`'s `tag-from-main` job reads the
-  version from `Cargo.toml`, tags the merge commit as
-  `v<version>`, and pushes the tag. The tag push runs the
-  `publish` job under the `production` GitHub Environment, which
-  requires a maintainer's approval before any image ships. Two
-  human touchpoints: (1) merge the release PR, (2) approve the
+- **Branches**: `dev` is the default branch AND the release
+  branch. Feature work goes on `feat/*`, `fix/*`,
+  `hardening/*`, etc. — PR into `dev`. Release cuts are a
+  `release/*` PR that bumps `Cargo.toml` and lands on `dev`.
+  **Merging a version-bump PR into `dev` is the release
+  trigger** — `publish.yml`'s `tag-on-version-bump` job reads
+  the version from `Cargo.toml`, exits idempotently if the
+  matching `v<version>` tag already exists (feature merges cost
+  nothing beyond a quick `ls-remote`), otherwise tags the merge
+  commit and pushes the tag. The tag push runs the `publish`
+  job under the `production` GitHub Environment, which requires
+  a maintainer's approval before any image ships. Two human
+  touchpoints: (1) merge the release PR, (2) approve the
   deploy. Agents never do either.
+  (There is no `main` branch on origin; the earlier convention
+  "release cuts merge `dev → main`" was never implemented and
+  has been retired in favour of the model above.)
 - **Companion files**: `README.md` (user-facing quickstart),
   `SECURITY.md` (disclosure + posture), `STANDARDS.md` (build/test/publish
   rules), `CHANGELOG.md` (per-release breaking-change narrative), and
