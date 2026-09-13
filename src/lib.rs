@@ -1,4 +1,5 @@
 pub mod access_log;
+pub mod auth;
 pub mod backend;
 pub mod config;
 pub mod diagnose;

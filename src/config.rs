@@ -24,6 +24,14 @@ pub struct AppConfig {
     /// declared but an env var is missing — never a silent downgrade.
     pub s3: Option<S3Config>,
     pub limits: LimitsConfig,
+    /// Optional inter-service auth. When `inter_service_token` is
+    /// `Some`, every request to `/v1/files*` must present a matching
+    /// `Authorization: Bearer <token>` header (constant-time compared).
+    /// `/`, `/health`, and `/api` remain public because a reverse-proxy
+    /// liveness / discovery flow needs them to.
+    ///
+    /// h2ck.me v1 public-exposure findings F-FF-1, F-FF-2, F-FF-3.
+    pub security: SecurityConfig,
 }
 
 #[derive(Debug, Clone)]
@@ -54,6 +62,35 @@ impl fmt::Debug for S3Config {
             .field("bucket_path", &self.bucket_path)
             .field("access_key_id", &"***REDACTED***")
             .field("secret_access_key", &"***REDACTED***")
+            .finish()
+    }
+}
+
+/// F-FF-1 / F-FF-2 / F-FF-3 (h2ck.me v1 public-exposure): optional
+/// bearer-token gate. `Debug` is hand-written so a stray
+/// `format!("{:?}", cfg)` (or a boot-time diagnostic) never leaks the
+/// live token — same posture as `S3Config` (F2).
+#[derive(Clone, Default)]
+pub struct SecurityConfig {
+    /// Resolved bearer token. `Some` = require it on gated routes.
+    /// `None` = pass-through (backwards-compatible with pre-auth
+    /// deployments).
+    pub inter_service_token: Option<String>,
+    /// True = accept non-loopback bind without a token (e.g. because
+    /// a reverse proxy / service mesh already authenticates every
+    /// request). Suppresses the boot WARN about an unauth non-loopback
+    /// listener.
+    pub trust_network: bool,
+}
+
+impl fmt::Debug for SecurityConfig {
+    fn fmt(&self, f: &mut fmt::Formatter<'_>) -> fmt::Result {
+        f.debug_struct("SecurityConfig")
+            .field(
+                "inter_service_token",
+                &self.inter_service_token.as_ref().map(|_| "***REDACTED***"),
+            )
+            .field("trust_network", &self.trust_network)
             .finish()
     }
 }
@@ -98,6 +135,7 @@ impl Default for AppConfig {
             fs: FsConfig::default(),
             s3: None,
             limits: LimitsConfig::default(),
+            security: SecurityConfig::default(),
         }
     }
 }
@@ -123,6 +161,26 @@ struct AppConfigYaml {
     s3: Option<S3ConfigYaml>,
     #[serde(default)]
     limits: Option<LimitsConfigYaml>,
+    #[serde(default)]
+    security: Option<SecurityConfigYaml>,
+}
+
+/// F-FF-1..3: YAML shape for the security block. The token value is
+/// **never** in the YAML — only the name of an env var to read from,
+/// matching the S3 credentials pattern (`access_key_id_env`).
+#[derive(Debug, Deserialize, Default)]
+#[serde(deny_unknown_fields)]
+struct SecurityConfigYaml {
+    /// Env var name whose value is the bearer token clients must
+    /// present. When absent, gated routes are open (backwards-
+    /// compatible with pre-auth deployments).
+    #[serde(default)]
+    inter_service_token_env: Option<String>,
+    /// Suppress the boot-time WARN when binding non-loopback without
+    /// a token. Set this only when a reverse proxy / service mesh
+    /// already authenticates every request that reaches FileFerry.
+    #[serde(default)]
+    trust_network: Option<bool>,
 }
 
 #[derive(Debug, Deserialize, Default)]
@@ -191,6 +249,16 @@ fn resolve_path(explicit_path: Option<&Path>) -> Option<PathBuf> {
 
 fn from_yaml(y: AppConfigYaml) -> anyhow::Result<AppConfig> {
     let defaults = AppConfig::default();
+    let security = match y.security {
+        Some(s) => SecurityConfig {
+            inter_service_token: match s.inter_service_token_env.as_deref() {
+                Some(name) if !name.is_empty() => Some(require_env(name)?),
+                _ => None,
+            },
+            trust_network: s.trust_network.unwrap_or(false),
+        },
+        None => defaults.security.clone(),
+    };
     let mut cfg = AppConfig {
         port: y.port.unwrap_or(defaults.port),
         documentation_enabled: y
@@ -227,6 +295,7 @@ fn from_yaml(y: AppConfigYaml) -> anyhow::Result<AppConfig> {
                 .and_then(|l| l.copy_inactivity_secs)
                 .unwrap_or(defaults.limits.copy_inactivity_secs),
         },
+        security,
     };
     if let Some(s3) = y.s3 {
         let access_key_id = require_env(&s3.access_key_id_env)?;
