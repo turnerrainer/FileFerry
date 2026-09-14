@@ -298,5 +298,24 @@ not weaken it): `read_only: true` rootfs, `no-new-privileges: true`,
 - **Releases** — <https://github.com/turnerrainer/FileFerry/releases>.
   The `publish.yml` workflow creates a GitHub Release entry as
   part of every tag push, populated from the matching
-  `CHANGELOG.md` section. Pre-release tags (any tag with a
-  `-<suffix>`) are marked `prerelease: true`.
+  `CHANGELOG.md` section.
+- **Pre-1.0 "Latest" policy.** While the shipping version is
+  0.x, every release is written with `prerelease: false` +
+  `make_latest: true` so it populates the repo main-page
+  Releases sidebar and the `/releases/latest` API. GitHub
+  otherwise refuses "Latest" for anything with `prerelease:
+  true`, and the project only ships alphas — the sidebar would
+  be permanently empty. The semver tag suffix (`-alpha`)
+  continues to communicate maturity to any consumer who reads
+  the tag. **When the first `v1.0.0` ships**, flip the
+  `Create GitHub Release` step in `publish.yml` back to
+  `prerelease: ${{ steps.meta.outputs.prerelease }}` +
+  `make_latest: ${{ steps.meta.outputs.prerelease == 'false' }}`
+  so future betas / RCs / hotfix-alphas don't displace stable
+  as Latest. There's a block comment on the step describing the
+  flip.
+- **README badges.** Top of the README carries shields.io
+  badges for latest release + release date + license + image
+  surface. These render on the repo main page independently of
+  the Releases sidebar, so consumers see the current version
+  even if a future policy change ever leaves the sidebar blank.

@@ -442,18 +442,38 @@ jobs:
             echo "END_OF_NOTES"
           } >> "$GITHUB_OUTPUT"
 
-      # Create (or update) the GitHub Release entry for this tag. Runs
-      # after signing so a signed image is always visible on the
-      # Releases page; if signing failed the workflow aborts before
-      # this step so we never publish a Release for an unverified
-      # image. `prerelease` is derived from the tag (any tag with a
-      # `-<suffix>` is a pre-release per `steps.meta`).
+      # Create (or update) the GitHub Release entry for this tag.
+      # Runs after signing so a signed image is always visible on
+      # the Releases page; if signing failed the workflow aborts
+      # before this step so we never publish a Release for an
+      # unverified image.
       #
-      # Pin to major version `@v2` — GitHub Actions consumers should
-      # prefer SHA pins for supply-chain integrity, but `softprops/
-      # action-gh-release` publishes a signed release for each `vN`
-      # tag and moves it atomically. Revisit if the fleet-wide
-      # posture tightens to require full SHA pins.
+      # ---- Pre-1.0 "Latest" policy ------------------------------
+      # GitHub's rule: prereleases can't be marked "Latest", so
+      # they don't populate the repo main-page Releases sidebar
+      # OR the `/releases/latest` API. While FileFerry ships only
+      # alphas (no stable release yet), that would leave the repo
+      # main page permanently showing "no releases".
+      #
+      # Policy: while the shipping version is 0.x (pre-1.0), every
+      # release is marked `prerelease: false` + `make_latest: true`
+      # so it populates the sidebar and the `latest` API. The
+      # semver `-alpha` suffix in the tag name (`v0.2.1-alpha`)
+      # continues to communicate the maturity level to any consumer
+      # who reads the tag. This tradeoff was authorised for the
+      # 0.x line explicitly (see PR that landed this comment).
+      #
+      # When the first `v1.0.0` ships, flip back to
+      # `prerelease: ${{ steps.meta.outputs.prerelease }}` +
+      # `make_latest: ${{ steps.meta.outputs.prerelease == 'false' }}`
+      # so future betas / RCs / hotfix-alphas don't displace
+      # stable as Latest.
+      #
+      # Pin to major version `@v2` — GitHub Actions consumers
+      # should prefer SHA pins for supply-chain integrity, but
+      # `softprops/action-gh-release` publishes a signed release
+      # for each `vN` tag and moves it atomically. Revisit if the
+      # fleet-wide posture tightens to require full SHA pins.
       - name: Create GitHub Release
         id: gh_release
         uses: softprops/action-gh-release@v2
@@ -461,8 +481,8 @@ jobs:
           tag_name: ${{ github.event.inputs.tag || github.ref_name }}
           name: "FileFerry ${{ github.event.inputs.tag || github.ref_name }}"
           body: ${{ steps.notes.outputs.body }}
-          prerelease: ${{ steps.meta.outputs.prerelease }}
-          make_latest: ${{ steps.meta.outputs.prerelease == 'false' }}
+          prerelease: false
+          make_latest: true
           fail_on_unmatched_files: false
 
       # Belt-and-braces verification. `softprops/action-gh-release`
