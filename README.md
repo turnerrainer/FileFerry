@@ -1,5 +1,10 @@
 # FileFerry
 
+[![Latest release](https://img.shields.io/github/v/release/turnerrainer/FileFerry?include_prereleases&sort=semver&label=release&color=blue)](https://github.com/turnerrainer/FileFerry/releases)
+[![Release date](https://img.shields.io/github/release-date-pre/turnerrainer/FileFerry?label=released&color=blue)](https://github.com/turnerrainer/FileFerry/releases)
+[![License](https://img.shields.io/github/license/turnerrainer/FileFerry?color=blue)](./LICENSE)
+[![Container images](https://img.shields.io/badge/images-ghcr%20%7C%20docker.io-blue)](https://github.com/turnerrainer/FileFerry/pkgs/container/fileferry)
+
 A small HTTP file-transfer proxy. Rust re-implementation of
 [buerokratt/S3-Ferry](https://github.com/buerokratt/S3-Ferry).
 
