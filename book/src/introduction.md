@@ -1,6 +1,6 @@
 # FileFerry
 
-**Version:** 0.2.0-alpha · **License:** Apache-2.0
+**Version:** 0.2.1-alpha · **License:** Apache-2.0
 
 FileFerry is a small HTTP service that brokers file transfers
 between a local filesystem and an S3-compatible object store. It
