@@ -96,6 +96,7 @@ then decide.
 | `CopyFileRequest` and `ListFilesQuery` use `#[serde(deny_unknown_fields)]` (FN-LOG-2) | `src/model.rs` | `copy_rejects_unknown_field_in_body`, `list_rejects_unknown_query_field` |
 | Copy-audit log line hashes source/destination paths (SHA-256 first 12 hex) — never emit raw path to logs (FN-LOG-3 / §S4) | `src/backend/mod.rs` `path_hash` inside `stream_copy` | `path_hash_is_deterministic_and_short`, `path_hash_does_not_contain_raw_path_substring` |
 | User-controlled substrings in error responses and log lines are clipped to `MAX_USER_MESSAGE_LEN` (256 chars) with a trailing `...` marker (AP-6 / T-11). Applied twice: once at extractor construction (`TypedQuery` / `TypedJson`) and again in `FerryError::IntoResponse` — belt-and-braces so a refactor on either side keeps the bound. | `src/error.rs` `clip_user_message`, `src/extract.rs` | `clip_user_message_*` (unit), `error_message_body_bounded_regardless_of_query_size`, `malformed_json_body_error_message_is_clipped` |
+| Known route + wrong method → **405 Method Not Allowed** (with `allow: <valid methods>` response header per RFC 7231 §6.5.5), NOT 404 (T-18). Unknown route → 404. Behavior provided by axum's routing layer; regression tests pin it so a future middleware layer or router refactor doesn't accidentally swallow it. | `src/router.rs` route table | `method_not_allowed_on_known_route_returns_405`, `unknown_route_still_returns_404` |
 
 ### 2.3 Public-exposure defenses (F-FF-series, landed 2026-09-13)
 
