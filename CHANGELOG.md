@@ -9,6 +9,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **T-23 — graceful shutdown on SIGTERM / SIGINT (fleet-wide
+  gap per h2ck.me OWASP-PROBES §34.4).** Before this change
+  `axum::serve(...).await` did not stop cleanly when the
+  container got SIGTERM: the tokio runtime aborted every
+  in-flight request when the process exited. Under
+  `docker stop` (default 10 s grace) or a Kubernetes
+  rolling-restart, that meant a `POST /v1/files/copy` in
+  the middle of streaming a large object died half-way with
+  no audit-log line — a partial-transfer with no record. Now
+  wired via `axum::serve(...).with_graceful_shutdown(shutdown_signal())`:
+  axum stops accepting new connections when SIGTERM (or
+  SIGINT / Ctrl-C in dev) fires, waits for in-flight
+  requests to complete, then returns. Emits one INFO line
+  naming the signal that started the shutdown so the
+  operator log records **why** the process exited. Regression
+  test raises SIGTERM at the test binary and asserts the
+  future resolves within 500 ms.
+
 - **T-22 — `fileferry doctor` subcommand.** New synchronous
   `fileferry doctor [--config <path>]` invocation. Loads the
   same config the runtime would load, runs the preflight WARN
