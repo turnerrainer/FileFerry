@@ -13,6 +13,12 @@
 port: 8080
 
 # Serve the auto-generated /api endpoint listing the HTTP surface.
+#
+# T-6 (F-FF-3, AP-2 fleet stronghold §3.3): `/api` is ALSO env-gated —
+# even with `documentation_enabled: true`, the endpoint returns 404
+# unless `FILEFERRY_ADMIN_ENABLED=1` is set at boot. Recon endpoints
+# are opt-in; the dual gate lets operators keep the env-gate on for
+# tooling while silencing the doc endpoint via YAML.
 documentation_enabled: true
 
 # CORS. Leave empty for same-origin only. "*" for open (dev only).

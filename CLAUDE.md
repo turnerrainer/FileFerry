@@ -100,7 +100,8 @@ then decide.
 
 | Invariant | Enforced by | Regression test |
 |---|---|---|
-| Optional inter-service bearer token gates `/v1/files*` when `security.inter_service_token_env` names a live env var (F-FF-1, F-FF-2, F-FF-3). Comparison is constant-time via `subtle::ConstantTimeEq` (§3.2). `/`, `/health`, `/api` remain public. | `src/auth.rs` `require_bearer`, `src/router.rs` gated sub-router | `auth_off_by_default_list_still_open`, `auth_required_list_rejects_missing_bearer`, `auth_required_list_rejects_wrong_bearer`, `auth_required_list_accepts_correct_bearer`, `auth_required_copy_rejects_missing_bearer`, `auth_required_health_root_and_api_still_open` |
+| Optional inter-service bearer token gates `/v1/files*` when `security.inter_service_token_env` names a live env var (F-FF-1, F-FF-2). Comparison is constant-time via `subtle::ConstantTimeEq` (§3.2). `/`, `/health` remain public unconditionally. | `src/auth.rs` `require_bearer`, `src/router.rs` gated sub-router | `auth_off_by_default_list_still_open`, `auth_required_list_rejects_missing_bearer`, `auth_required_list_rejects_wrong_bearer`, `auth_required_list_accepts_correct_bearer`, `auth_required_copy_rejects_missing_bearer`, `auth_required_health_and_root_still_open` |
+| `/api` (recon endpoint) defaults to 404 unless `FILEFERRY_ADMIN_ENABLED` is truthy at boot (F-FF-3 / T-6, AP-2 fleet stronghold §3.3). Even when admin is enabled, `documentation_enabled: false` in YAML still 404s. Never reveals the admin gate's existence to unauth callers — always returns 404, never 401. | `src/config.rs` `admin_enabled_from_env`, `src/router.rs` `openapi` handler | `openapi_returns_404_when_admin_disabled_by_default`, `openapi_returns_404_when_admin_enabled_but_docs_disabled`, `openapi_lists_expected_paths`, `admin_enabled_from_env_parses_truthy_and_falsy_values`, `admin_enabled_defaults_to_false` |
 | Boot emits WARN when listener is non-loopback AND no bearer token is configured AND `security.trust_network=false` | `src/main.rs` `warn_if_unauth_non_loopback` | manual — inspect boot log |
 
 ### 2.4 Fleet-stronghold adoptions (landed 2026-09-13)
@@ -126,11 +127,12 @@ If you are upgrading callers, custom backends, or CI configs from
 | 2 | `Query<T>` / `Json<T>` failures + oversize body return **`application/json` `{error, message}`** (was `text/plain`) | Client code that parses bare-text 4xx bodies | Switch to JSON parsing on 4xx / 413. Codes: `bad_query`, `bad_body`, `body_too_large`, `invalid_path`, `unauthorized`, `not_found`, `same_storage_type`, `backend_not_configured`, `list_limit_too_large`, `transfer_too_large`, `upstream_error`, `io_error`, `internal_error` |
 | 3 | `CopyFileRequest` / `ListFilesQuery` now `deny_unknown_fields` | Client code that sends extra fields "just in case" | Remove the extra fields; the server rejects with 4xx |
 | 4 | `NotFound` response body no longer echoes the requested path | Client code that greps the message for the file name | Read `error == "not_found"` from the JSON body instead |
-| 5 | Optional bearer gate: when `security.inter_service_token_env` is set, `/v1/files*` require `Authorization: Bearer <token>`; missing/wrong = 401 `unauthorized`. `/`, `/health`, `/api` stay public. | `grep -n 'security:' fileferry.yaml your-configs/` | Wire the token via env var; document `trust_network=true` only if a reverse proxy authenticates first |
+| 5 | Optional bearer gate: when `security.inter_service_token_env` is set, `/v1/files*` require `Authorization: Bearer <token>`; missing/wrong = 401 `unauthorized`. `/`, `/health` stay public unconditionally. | `grep -n 'security:' fileferry.yaml your-configs/` | Wire the token via env var; document `trust_network=true` only if a reverse proxy authenticates first |
 | 6 | Response now carries `traceparent` + `x-trace-id` + 5 security headers | Client tests that assert exact response-header set | Update assertions; treat these as always-present |
 | 7 | Copy-audit log line renamed `copy complete` → `file_transfer_completed`; `source_path` / `destination_path` fields replaced with `source_path_hash` / `destination_path_hash` (SHA-256 first 12 hex); new `duration_ms`, `outcome` fields | Log-shipping pipelines / SIEM rules that grep for `copy complete` or the raw path | Update parsers to the new event name + hashed fields |
 | 8 | `docker-compose.yml` service is now `read_only: true`; data path is a named volume `fileferry_data` at `/app/data` | Compose overrides that assumed a writable rootfs | Use the named volume (default) or replace the `volumes:` entry with a `- ./data:/app/data:rw` bind mount |
 | 9 | `FILEFERRY_OFFLINE=1` disables S3 outbound — every S3 call returns `Upstream("offline mode: ...")` | Pentest / break-test runners that expect FileFerry to reach real S3 | Explicitly unset the env var; or leave set on purpose to prevent live-S3 traffic |
+| 10 | `/api` (OpenAPI recon endpoint) now defaults to 404. Serve it by setting `FILEFERRY_ADMIN_ENABLED=1` at boot (F-FF-3 / T-6, AP-2). `/`, `/health` still public. Returns 404 not 401 when disabled — never leaks the gate's existence. | Client / tooling that scrapes `/api` for the route table | Set `FILEFERRY_ADMIN_ENABLED=1` when the tooling needs `/api`; otherwise treat it as gone |
 
 Also carried forward from the `0.1.3-alpha` breaking-change list:
 `Backend::list(ListOptions{...})` signature, `cors_origin` refuses on
@@ -191,6 +193,7 @@ not weaken it): `read_only: true` rootfs, `no-new-privileges: true`,
 | `LOG_ANSI` | `1`/`true` forces ANSI colour on stderr; `0`/`false` forces off. Absent = auto-detect via `atty` (off under Docker/systemd) |
 | `FILEFERRY_CONFIG` | Path to YAML config (higher precedence than `./fileferry.yaml`) |
 | `FILEFERRY_OFFLINE` | `1`/`true`/`yes` → S3 backend is stubbed; every S3 call returns `Upstream("offline mode")`. FS backend unaffected. For pentest / break-tests |
+| `FILEFERRY_ADMIN_ENABLED` | `1`/`true`/`yes` → serve `/api` (OpenAPI recon endpoint). Absent / anything else → `/api` returns 404. F-FF-3 / T-6 (AP-2 fleet stronghold §3.3): recon endpoints are opt-in |
 | Env var named by `security.inter_service_token_env` | Value is the bearer token clients must present as `Authorization: Bearer <value>` on `/v1/files*` |
 | Env vars named by `s3.access_key_id_env` / `s3.secret_access_key_env` | S3 credentials, resolved at boot; missing = hard boot failure |
 

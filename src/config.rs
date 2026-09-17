@@ -27,8 +27,9 @@ pub struct AppConfig {
     /// Optional inter-service auth. When `inter_service_token` is
     /// `Some`, every request to `/v1/files*` must present a matching
     /// `Authorization: Bearer <token>` header (constant-time compared).
-    /// `/`, `/health`, and `/api` remain public because a reverse-proxy
-    /// liveness / discovery flow needs them to.
+    /// `/`, `/health` remain public unconditionally (liveness probes).
+    /// `/api` is a recon endpoint and defaults to 404 unless
+    /// `FILEFERRY_ADMIN_ENABLED=1` is set at boot (F-FF-3).
     ///
     /// h2ck.me v1 public-exposure findings F-FF-1, F-FF-2, F-FF-3.
     pub security: SecurityConfig,
@@ -81,6 +82,12 @@ pub struct SecurityConfig {
     /// request). Suppresses the boot WARN about an unauth non-loopback
     /// listener.
     pub trust_network: bool,
+    /// F-FF-3 (h2ck.me v1 AP-2 — recon endpoints unauth by default):
+    /// when `false`, `/api` returns 404 regardless of
+    /// `documentation_enabled`. Set by the `FILEFERRY_ADMIN_ENABLED`
+    /// env var at boot (truthy = `1` / `true` / `yes`, case-insensitive).
+    /// `/`, `/health` remain public unconditionally. Default off.
+    pub admin_enabled: bool,
 }
 
 impl fmt::Debug for SecurityConfig {
@@ -91,7 +98,20 @@ impl fmt::Debug for SecurityConfig {
                 &self.inter_service_token.as_ref().map(|_| "***REDACTED***"),
             )
             .field("trust_network", &self.trust_network)
+            .field("admin_enabled", &self.admin_enabled)
             .finish()
+    }
+}
+
+/// True when `FILEFERRY_ADMIN_ENABLED` is a truthy value (`1` / `true`
+/// / `yes`, case-insensitive). Any other value (including empty) or
+/// unset = admin off. Mirrors the semantics of
+/// `backend::offline::offline_from_env` so operators see one env-truthy
+/// convention across the service.
+pub fn admin_enabled_from_env() -> bool {
+    match env::var("FILEFERRY_ADMIN_ENABLED") {
+        Ok(v) => matches!(v.trim().to_ascii_lowercase().as_str(), "1" | "true" | "yes"),
+        Err(_) => false,
     }
 }
 
@@ -220,7 +240,12 @@ pub fn load(explicit_path: Option<&Path>) -> anyhow::Result<AppConfig> {
     let candidate = resolve_path(explicit_path);
     let Some(path) = candidate else {
         tracing::info!("no fileferry.yaml found; using built-in defaults");
-        return Ok(AppConfig::default());
+        let mut cfg = AppConfig::default();
+        // F-FF-3: admin_enabled is env-driven and independent of the
+        // YAML file — apply the FILEFERRY_ADMIN_ENABLED override even
+        // when no yaml exists.
+        cfg.security.admin_enabled = admin_enabled_from_env();
+        return Ok(cfg);
     };
     tracing::info!(path = %path.display(), "loading config");
     let text = std::fs::read_to_string(&path)
@@ -256,8 +281,12 @@ fn from_yaml(y: AppConfigYaml) -> anyhow::Result<AppConfig> {
                 _ => None,
             },
             trust_network: s.trust_network.unwrap_or(false),
+            admin_enabled: admin_enabled_from_env(),
         },
-        None => defaults.security.clone(),
+        None => SecurityConfig {
+            admin_enabled: admin_enabled_from_env(),
+            ..defaults.security.clone()
+        },
     };
     let mut cfg = AppConfig {
         port: y.port.unwrap_or(defaults.port),
@@ -541,5 +570,37 @@ s3:
         // typos that would otherwise silently be ignored.
         let err = serde_yaml_ng::from_str::<AppConfigYaml>("porrt: 9000\n").unwrap_err();
         assert!(err.to_string().to_lowercase().contains("porrt"));
+    }
+
+    #[test]
+    fn admin_enabled_defaults_to_false() {
+        // F-FF-3: recon endpoints are opt-in. The runtime default MUST
+        // be admin_enabled=false so a fresh deployment doesn't
+        // silently ship `/api`.
+        assert!(!AppConfig::default().security.admin_enabled);
+    }
+
+    #[test]
+    fn admin_enabled_from_env_parses_truthy_and_falsy_values() {
+        // Grouped into one test on purpose — env vars are process-wide
+        // shared state, and two parallel tests toggling the same var
+        // would race. See the same pattern in
+        // `backend::offline::tests::offline_env_*`.
+        //
+        // NOTE: keep this test set-then-clear symmetric so subsequent
+        // tests in the file don't see leaked state.
+        for val in ["1", "true", "TRUE", "True", "yes", "YES"] {
+            std::env::set_var("FILEFERRY_ADMIN_ENABLED", val);
+            assert!(
+                admin_enabled_from_env(),
+                "{val:?} should mean admin_enabled=true"
+            );
+        }
+        for val in ["0", "false", "no", "", "off", "on"] {
+            std::env::set_var("FILEFERRY_ADMIN_ENABLED", val);
+            assert!(!admin_enabled_from_env(), "{val:?} should NOT enable admin");
+        }
+        std::env::remove_var("FILEFERRY_ADMIN_ENABLED");
+        assert!(!admin_enabled_from_env(), "unset must default to false");
     }
 }
