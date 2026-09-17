@@ -1,6 +1,7 @@
 pub mod access_log;
 pub mod auth;
 pub mod backend;
+pub mod boot_warnings;
 pub mod config;
 pub mod diagnose;
 pub mod error;

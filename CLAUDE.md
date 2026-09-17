@@ -102,7 +102,7 @@ then decide.
 |---|---|---|
 | Optional inter-service bearer token gates `/v1/files*` when `security.inter_service_token_env` names a live env var (F-FF-1, F-FF-2). Comparison is constant-time via `subtle::ConstantTimeEq` (§3.2). `/`, `/health` remain public unconditionally. | `src/auth.rs` `require_bearer`, `src/router.rs` gated sub-router | `auth_off_by_default_list_still_open`, `auth_required_list_rejects_missing_bearer`, `auth_required_list_rejects_wrong_bearer`, `auth_required_list_accepts_correct_bearer`, `auth_required_copy_rejects_missing_bearer`, `auth_required_health_and_root_still_open` |
 | `/api` (recon endpoint) defaults to 404 unless `FILEFERRY_ADMIN_ENABLED` is truthy at boot (F-FF-3 / T-6, AP-2 fleet stronghold §3.3). Even when admin is enabled, `documentation_enabled: false` in YAML still 404s. Never reveals the admin gate's existence to unauth callers — always returns 404, never 401. | `src/config.rs` `admin_enabled_from_env`, `src/router.rs` `openapi` handler | `openapi_returns_404_when_admin_disabled_by_default`, `openapi_returns_404_when_admin_enabled_but_docs_disabled`, `openapi_lists_expected_paths`, `admin_enabled_from_env_parses_truthy_and_falsy_values`, `admin_enabled_defaults_to_false` |
-| Boot emits WARN when listener is non-loopback AND no bearer token is configured AND `security.trust_network=false` | `src/main.rs` `warn_if_unauth_non_loopback` | manual — inspect boot log |
+| Boot emits a numbered preflight WARN block with stable `W-<n>` ids (T-21, fleet stronghold §11 TIM pattern): W-1 unauth non-loopback bind (was `warn_if_unauth_non_loopback`), W-2 `trust_network=true` without a token, W-3 admin recon endpoint on public bind, W-4 `documentation_enabled` still on public bind, W-5 `copy_inactivity_secs` past the 5 min ceiling, W-6 `max_request_bytes` past the 100 MiB ceiling. Each check has a legitimate override so a hard fail would break existing deployments; the id makes the check log-alertable. | `src/boot_warnings.rs` `preflight` + `log_preflight`, wired in `src/main.rs` | `default_loopback_is_silent`, `wildcard_bind_without_auth_fires_w1_and_w4`, `wildcard_with_token_only_fires_w4`, `trust_network_without_token_fires_w2`, `admin_enabled_on_wildcard_fires_w3`, `copy_inactivity_above_ceiling_fires_w5`, `copy_inactivity_at_ceiling_is_silent`, `max_request_bytes_above_ceiling_fires_w6`, `every_warning_id_is_unique` |
 
 ### 2.4 Fleet-stronghold adoptions (landed 2026-09-13)
 
@@ -227,8 +227,14 @@ not weaken it): `read_only: true` rootfs, `no-new-privileges: true`,
   that touches a backend, put it inside the `gated` sub-router so it
   respects the bearer gate. Public liveness / discovery goes on the
   outer router.**
+- `src/boot_warnings.rs` — numbered preflight WARN block (T-21).
+  Each check has a stable `W-<n>` id so log-alert pipelines can
+  key on it without matching the wire message. Adding a check:
+  add a `fn check_<n>` returning `Option<BootWarning>` and
+  reference it from `preflight`. Never reuse an existing id.
 - `src/main.rs` — boot sequence: config load → diagnose → backend
-  init (offline check here) → boot WARNs → serve. Version bumps and
+  init (offline check here) → preflight WARN block
+  (`boot_warnings::log_preflight`) → serve. Version bumps and
   release tags NEVER land in a feature PR.
 - `src/validate.rs` — path whitelist + `.` / `..` segment ban.
 - `src/model.rs` — DTOs, all with `#[serde(deny_unknown_fields)]`.
