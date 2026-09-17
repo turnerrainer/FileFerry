@@ -49,6 +49,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   side of every S3 request was affected. Applied via
   `cargo update -p rustls`; no code changes.
 
+- **AP-6 / T-11 — clip user-controlled substrings in error
+  responses and log lines to 256 chars.** Before this change,
+  an attacker sending a huge query string or malformed body
+  surfaced as a proportionally huge error message: the axum
+  `Query<T>` rejection text embeds the offending value
+  verbatim (`unknown variant `<4 KB of A's>`...`), and
+  `serde_json` parse errors quote a chunk of the payload.
+  That's a free amplifier — 1 KB request → 4 KB response and
+  a 4 KB log line per hit. Now `FerryError::IntoResponse`
+  runs the message through `clip_user_message` (safely
+  truncated to `MAX_USER_MESSAGE_LEN = 256` chars at a UTF-8
+  boundary, `...` marker appended when clipped) before it
+  lands in the JSON body OR the tracing field. `TypedQuery`
+  and `TypedJson` apply the same clip at rejection
+  construction — belt-and-braces so a refactor on either
+  side keeps the bound. Verified via a break-the-fix probe
+  that sends 4 KB / 64 KB / 1 MB inputs and asserts the
+  emitted message stays flat.
+
 ### Changed (breaking)
 
 - **`GET /api` (OpenAPI recon endpoint) now defaults to 404
