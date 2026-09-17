@@ -9,6 +9,20 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Added
 
+- **T-22 — `fileferry doctor` subcommand.** New synchronous
+  `fileferry doctor [--config <path>]` invocation. Loads the
+  same config the runtime would load, runs the preflight WARN
+  block (T-21), prints a green/amber report to stdout with a
+  config summary + every warning, exits `0` (green), `1`
+  (warnings surfaced), or `2` (config invalid). Bearer tokens
+  and other secrets are shown as `SET (masked)` — the raw
+  value never lands in the report. Handled BEFORE tokio starts
+  so it stays fast and stderr-quiet (doctor output is
+  stdout-only for shell composition, e.g.
+  `fileferry doctor >/dev/null || alert`). New module
+  `src/doctor.rs`; end-to-end test spawns the binary via
+  `CARGO_BIN_EXE_fileferry` and asserts both exit codes.
+
 - **T-21 — numbered preflight WARN block (fleet stronghold §11,
   TIM pattern).** `warn_if_unauth_non_loopback` grew into six
   checks with stable `W-<n>` ids. `W-1` is the previous

@@ -68,25 +68,22 @@ mod tests {
     use super::*;
 
     #[test]
-    fn offline_env_recognises_common_truthy_values() {
+    fn offline_env_parses_truthy_and_falsy_values() {
+        // Env vars are process-wide shared state — splitting the
+        // truthy / falsy / unset probes into three parallel
+        // `#[test]`s races on the shared FILEFERRY_OFFLINE value.
+        // Grouped into one serialised test. Same pattern as
+        // `config::tests::admin_enabled_from_env_parses_*`.
         for val in ["1", "true", "TRUE", "True", "yes"] {
             std::env::set_var("FILEFERRY_OFFLINE", val);
             assert!(offline_from_env(), "{val:?} should mean offline");
         }
-    }
-
-    #[test]
-    fn offline_env_defaults_to_online() {
-        std::env::remove_var("FILEFERRY_OFFLINE");
-        assert!(!offline_from_env());
-    }
-
-    #[test]
-    fn offline_env_rejects_ambiguous_values() {
         for val in ["0", "false", "no", ""] {
             std::env::set_var("FILEFERRY_OFFLINE", val);
             assert!(!offline_from_env(), "{val:?} should mean online");
         }
+        std::env::remove_var("FILEFERRY_OFFLINE");
+        assert!(!offline_from_env(), "unset must default to online");
     }
 
     #[tokio::test]

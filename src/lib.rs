@@ -4,6 +4,7 @@ pub mod backend;
 pub mod boot_warnings;
 pub mod config;
 pub mod diagnose;
+pub mod doctor;
 pub mod error;
 pub mod extract;
 pub mod model;
