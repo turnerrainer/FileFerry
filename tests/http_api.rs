@@ -430,6 +430,52 @@ async fn copy_malformed_json_body_returns_structured_bad_body() {
     assert_eq!(json.get("error").unwrap(), "bad_body");
 }
 
+#[tokio::test(start_paused = true)]
+async fn slow_body_times_out_at_body_read_cap() {
+    // T-17: a peer that opens `POST /v1/files/copy` but never
+    // finishes sending the body used to hold a connection slot for
+    // up to `limits.request_timeout_secs` (5 min default). Now
+    // `TypedJson::from_request` wraps the inner body read in a
+    // 30 s hard cap; on expiry the caller gets `408 Request Timeout`
+    // with a structured `body_read_timeout` code.
+    //
+    // Uses `start_paused = true` + `tokio::time::advance` so the
+    // test runs in wall-clock ms, not 30 s. The stream feeding the
+    // body is `futures::stream::pending()` — yields `Pending`
+    // forever, so the ONLY way `Json::from_request` can complete
+    // is via the timeout wrapper.
+    use bytes::Bytes;
+    use futures::stream;
+    let stream = stream::pending::<Result<Bytes, std::io::Error>>();
+    let body = Body::from_stream(stream);
+
+    let tmp = TempDir::new().unwrap();
+    let app = build_router(app_state_with_fs_only(tmp.path()));
+    let response_task = tokio::spawn(async move {
+        app.oneshot(
+            Request::post("/v1/files/copy")
+                .header("content-type", "application/json")
+                .body(body)
+                .unwrap(),
+        )
+        .await
+        .unwrap()
+    });
+    // Advance past the body-read cap (30 s per BODY_READ_TIMEOUT).
+    // The `tokio::time::timeout` inside `TypedJson::from_request`
+    // should fire, producing `FerryError::BodyReadTimeout`.
+    tokio::time::advance(std::time::Duration::from_secs(31)).await;
+    let resp = response_task.await.unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::REQUEST_TIMEOUT,
+        "slow body must map to 408, got {}",
+        resp.status()
+    );
+    let json = parse_json(resp.into_body()).await;
+    assert_eq!(json.get("error").unwrap(), "body_read_timeout");
+}
+
 #[tokio::test]
 async fn copy_oversize_body_returns_structured_413() {
     // FN2 regression: previously the tower `RequestBodyLimitLayer`

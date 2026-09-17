@@ -59,6 +59,23 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ### Security
 
+- **T-17 — 30 s body-read hard cap on `POST /v1/files/copy`.**
+  Before this change, a peer that opened the request but never
+  finished sending the JSON body could hold a connection slot
+  for up to `limits.request_timeout_secs` (default 5 min). At
+  N concurrent slow senders that is N connection slots
+  consumed for the entire request-timeout window. Fix:
+  `TypedJson::from_request` now wraps the inner
+  `Json::from_request` in a `tokio::time::timeout` with a
+  30 s cap (`extract::BODY_READ_TIMEOUT`). On expiry the caller
+  gets HTTP 408 with a structured
+  `{"error":"body_read_timeout","message":"..."}` body. The
+  30 s cap is independent of the total-request timeout — the
+  narrower cap defends the accept queue specifically. New
+  variant `FerryError::BodyReadTimeout`. Regression test uses
+  `#[tokio::test(start_paused = true)]` + `advance(31 s)` so it
+  runs in wall-clock ms.
+
 - **Bump `rustls` to 0.23.45** (was 0.23.44) to pick up the fix
   for RUSTSEC-2026-0285: TLS 1.3 handshake messages were
   incorrectly accepted across encryption-level boundaries in
