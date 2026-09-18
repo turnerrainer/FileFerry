@@ -7,6 +7,18 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+## [0.2.2-alpha] - 2026-09-18
+
+Post-audit hardening pass. Every residual item on the h2ck.me v1
+backlog (`h2ck.me/projects/FileFerry/v1/NEXT-TASKS.md`, 24 items)
+is now closed — the last nine merged over the course of this
+release. Also closes one new-since-audit CVE
+(RUSTSEC-2026-0285 in rustls, transitively pulled by aws-sdk-s3).
+
+Every new invariant has a regression test; the suite grew
+82 → **109 passing tests** (66 unit + 2 compat + 2 doctor E2E +
+39 integration). Clippy, audit, and deny are all clean.
+
 ### Added
 
 - **T-23 — graceful shutdown on SIGTERM / SIGINT (fleet-wide
