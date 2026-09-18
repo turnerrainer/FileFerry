@@ -4,18 +4,24 @@ Read this file before you touch anything in `turnerrainer/fileferry`. It
 is the agent-facing brief: what to run, what to preserve, and how to
 spot configs that break under the current release.
 
-- **Current release**: `0.2.1-alpha`. Superseded `0.2.0-alpha`
-  before that ever shipped an image — Trivy blocked the
-  `0.2.0-alpha` publish on 12 Debian base-image CVEs, so
-  `0.2.1-alpha` cuts the same feature set on a rebuilt Dockerfile
-  (`debian:13-slim` floating tag + `apt-get upgrade`). All the
-  `[0.2.0-alpha]` semantics still apply — see `CHANGELOG.md`
-  `[0.2.0-alpha]` for the feature narrative and `[0.2.1-alpha]`
-  for the base-image patch note. The MINOR bump vs `0.1.3-alpha`
-  reflects a new `security:` config axis, a new
-  `FILEFERRY_OFFLINE` runtime axis, breaking wire changes to the
-  audit-log line, and breaking response-body-shape changes for
-  extractor rejections — see §3 below. **Agents never bump the
+- **Current release**: `0.2.2-alpha`. Post-audit hardening pass
+  that closes the last nine items on the h2ck.me v1 backlog
+  (T-6 /api env-gate, T-11 clip user strings, T-17 body-read
+  timeout, T-18 405-vs-404 pinning, T-21 boot WARN block,
+  T-22 `fileferry doctor`, T-23 SIGTERM graceful shutdown,
+  T-24 README security section) plus RUSTSEC-2026-0285 in
+  rustls. See `CHANGELOG.md` `[0.2.2-alpha]` for the full
+  narrative and §3 for the seams to check.
+  Prior release `0.2.1-alpha` (Debian base-image CVE patch)
+  superseded `0.2.0-alpha` before that ever shipped an image
+  — Trivy blocked the `0.2.0-alpha` publish on 12 Debian
+  base-image CVEs. All the `[0.2.0-alpha]` semantics still
+  apply — see `CHANGELOG.md` `[0.2.0-alpha]` for the feature
+  narrative. The MINOR bump vs `0.1.3-alpha` reflects a new
+  `security:` config axis, a new `FILEFERRY_OFFLINE` runtime
+  axis, breaking wire changes to the audit-log line, and
+  breaking response-body-shape changes for extractor
+  rejections — see §3 below. **Agents never bump the
   top-level version, never tag, never dispatch the publish
   workflow, never merge a release PR.** Releases are cut by the
   maintainer as a dedicated `chore(release)` commit merged from
@@ -58,11 +64,11 @@ cargo audit --deny warnings
 cargo deny check all
 ```
 
-Baseline on the `0.2.1-alpha` release commit: **82/82 tests
-pass** (48 unit + 2 compat + 32 integration). Clippy, audit,
-and deny are all clean. If your change reduces the test count
-or introduces a warning, that is a regression — fix it before opening
-the PR.
+Baseline on the `0.2.2-alpha` release commit: **109/109 tests
+pass** (66 unit + 2 compat + 2 doctor E2E + 39 integration).
+Clippy, audit, and deny are all clean. If your change reduces
+the test count or introduces a warning, that is a regression —
+fix it before opening the PR.
 
 ## 2. Do-not-break invariants
 
@@ -324,12 +330,12 @@ not weaken it): `read_only: true` rootfs, `no-new-privileges: true`,
 - **Book (rendered)** — <https://turnerrainer.github.io/fileferry/>.
 - **Images** — `docker.io/turnerrainer/fileferry:alpha` (moving
   alpha tag) and `ghcr.io/turnerrainer/fileferry:alpha`. Latest
-  immutable version tag: `:0.2.1-alpha` (prior: `:0.1.3-alpha`,
-  `:0.1.0-alpha.2`, `:0.1.0-alpha.1` — `:0.2.0-alpha` was never
-  built successfully; superseded by `:0.2.1-alpha` before any
-  image shipped). Every tag is signed via cosign keyless
-  (Sigstore OIDC) and carries in-toto provenance
-  + SPDX SBOM attestations.
+  immutable version tag: `:0.2.2-alpha` (prior: `:0.2.1-alpha`,
+  `:0.1.3-alpha`, `:0.1.0-alpha.2`, `:0.1.0-alpha.1` —
+  `:0.2.0-alpha` was never built successfully; superseded by
+  `:0.2.1-alpha` before any image shipped). Every tag is signed
+  via cosign keyless (Sigstore OIDC) and carries in-toto
+  provenance + SPDX SBOM attestations.
 - **Releases** — <https://github.com/turnerrainer/FileFerry/releases>.
   The `publish.yml` workflow creates a GitHub Release entry as
   part of every tag push, populated from the matching

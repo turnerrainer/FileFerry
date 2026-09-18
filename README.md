@@ -8,7 +8,7 @@
 A small HTTP file-transfer proxy. Rust re-implementation of
 [buerokratt/S3-Ferry](https://github.com/buerokratt/S3-Ferry).
 
-**Version:** 0.2.1-alpha · **License:** Apache-2.0
+**Version:** 0.2.2-alpha · **License:** Apache-2.0
 · **Docs:** [turnerrainer.github.io/fileferry](https://turnerrainer.github.io/fileferry/)
 · **Images:** `docker.io/turnerrainer/fileferry:alpha`, `ghcr.io/turnerrainer/fileferry:alpha`
 
@@ -89,8 +89,47 @@ cargo build --release --bin fileferry
 > shipped an image — Trivy blocked the build on 12 Debian
 > base-image CVEs. `0.2.1-alpha` cuts the same feature set on a
 > patched Dockerfile. Consumers should skip straight to
-> `0.2.1-alpha`; the sections below cover both the feature move
-> AND the base-image patch.
+> `0.2.2-alpha`; the sections below cover the feature move, the
+> base-image patch, AND the `0.2.2-alpha` hardening pass.
+
+### From `0.2.1-alpha` → `0.2.2-alpha`
+
+Post-audit hardening pass; every residual on the h2ck.me v1
+backlog is now closed. Read the [`0.2.2-alpha` entry in
+`CHANGELOG.md`](./CHANGELOG.md) for the full narrative. New
+seams to check:
+
+- **`GET /api` now defaults to 404.** Set
+  `FILEFERRY_ADMIN_ENABLED=1` at boot to serve it. When the
+  env-gate is off the endpoint returns 404 (not 401) — never
+  reveals the gate's existence.
+- **New `fileferry doctor` subcommand.** `fileferry doctor
+  [--config <path>]` prints a green/amber report and exits
+  `0` (clean), `1` (WARNs surfaced), or `2` (config invalid).
+  Bearer tokens render as `SET (masked)`; the raw value never
+  lands in the report. Safe to run in CI.
+- **Numbered boot-time WARN block (`W-1`..`W-6`).** New
+  preflight checks with stable ids for log-alert pipelines:
+  unauth non-loopback bind, `trust_network=true` without a
+  token, admin recon endpoint on public bind,
+  `documentation_enabled: true` on public bind,
+  `copy_inactivity_secs > 300`, `max_request_bytes > 100 MiB`.
+  Each check has a legitimate override — WARN only, not a
+  hard fail.
+- **HTTP 408 `body_read_timeout` is now a possible response
+  code** on `POST /v1/files/copy` — a slow-drip peer that
+  stalls past 30 s of body read gets a structured 408 instead
+  of holding the connection until the total-request timeout.
+- **Error-message bodies are capped at 256 characters.**
+  Clients that used to see the offending value echoed back
+  verbatim now see a truncated form ending in `...`.
+- **Graceful shutdown on SIGTERM / SIGINT.** In-flight
+  transfers under `docker stop` / K8s rolling-restart now
+  complete cleanly (up to Docker's grace window) instead of
+  dying half-way with no audit-log line.
+- **Log-alert rules can key on the shutdown INFO line.** Boot
+  emits `graceful shutdown initiated` naming the signal
+  (SIGTERM / SIGINT).
 
 ### From `0.1.3-alpha` → `0.2.1-alpha`
 
