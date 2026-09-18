@@ -1080,6 +1080,77 @@ async fn auth_required_copy_rejects_missing_bearer() {
 }
 
 #[tokio::test]
+async fn method_not_allowed_on_known_route_returns_405() {
+    // T-18: axum's default is 404 for a route defined with only `get()`
+    // when accessed via POST. RFC 7231 §6.5.5 requires 405 when the
+    // path is known but the method isn't. Probes each known route with
+    // an inappropriate method and asserts 405 — plus an `allow`
+    // response header naming the valid methods (RFC MUST).
+    let tmp = TempDir::new().unwrap();
+    let app = build_router(app_state_with_fs_only(tmp.path()));
+    // (path, wrong-method, expected-allow-substring)
+    let cases: &[(&str, axum::http::Method, &str)] = &[
+        ("/", axum::http::Method::POST, "GET"),
+        ("/health", axum::http::Method::POST, "GET"),
+        ("/health", axum::http::Method::DELETE, "GET"),
+        ("/v1/files", axum::http::Method::POST, "GET"),
+        ("/v1/files", axum::http::Method::DELETE, "GET"),
+        ("/v1/files/copy", axum::http::Method::GET, "POST"),
+        ("/v1/files/copy", axum::http::Method::DELETE, "POST"),
+    ];
+    for (path, method, allow_needle) in cases {
+        let resp = app
+            .clone()
+            .oneshot(
+                Request::builder()
+                    .method(method.clone())
+                    .uri(*path)
+                    .body(Body::empty())
+                    .unwrap(),
+            )
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::METHOD_NOT_ALLOWED,
+            "expected 405 for {method} {path}, got {}",
+            resp.status()
+        );
+        let allow = resp
+            .headers()
+            .get("allow")
+            .and_then(|v| v.to_str().ok())
+            .unwrap_or("");
+        assert!(
+            allow.contains(allow_needle),
+            "405 for {method} {path} missing `allow: {allow_needle}` header (got {allow:?})"
+        );
+    }
+}
+
+#[tokio::test]
+async fn unknown_route_still_returns_404() {
+    // T-18 sanity check: only KNOWN routes get 405. A path the router
+    // never heard of must still 404 — otherwise `/anything` -> 405 would
+    // itself be a recon signal (attacker learns "I found a real path").
+    let tmp = TempDir::new().unwrap();
+    let app = build_router(app_state_with_fs_only(tmp.path()));
+    for path in ["/nope", "/v1/files/there_is_no_such_thing", "/admin"] {
+        let resp = app
+            .clone()
+            .oneshot(Request::get(path).body(Body::empty()).unwrap())
+            .await
+            .unwrap();
+        assert_eq!(
+            resp.status(),
+            StatusCode::NOT_FOUND,
+            "unknown path {path} must 404, got {}",
+            resp.status()
+        );
+    }
+}
+
+#[tokio::test]
 async fn auth_required_health_and_root_still_open() {
     // F-FF-1/F-FF-2: `/`, `/health` MUST remain public regardless of
     // bearer-token configuration — liveness probes and load balancers

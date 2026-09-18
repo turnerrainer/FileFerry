@@ -87,6 +87,19 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   `/api` from the default endpoint must set the env var
   explicitly.
 
+### Security (posture pinning)
+
+- **T-18 — regression tests for method-not-allowed → 405 (not
+  404).** h2ck.me v1 flagged the 405-vs-404 gap against
+  `0.1.3-alpha`; the axum 0.7 routing layer used since
+  `0.2.0-alpha` already returns 405 with the RFC 7231 §6.5.5
+  `allow` header for known routes with the wrong method (and
+  keeps 404 for genuinely-unknown paths). Tests locked the
+  behavior so a future middleware layer, custom
+  `fallback_service`, or router refactor can't silently
+  regress it. Probes every route × method mismatch and
+  asserts both the status and the `allow` response header.
+
 ### Chore
 
 - **Drop the stale `RUSTSEC-2026-0253` (lru unsound) ignore from
