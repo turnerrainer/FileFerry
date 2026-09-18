@@ -7,6 +7,26 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Security
+
+- **Bump `rustls` to 0.23.45** (was 0.23.44) to pick up the fix
+  for RUSTSEC-2026-0285: TLS 1.3 handshake messages were
+  incorrectly accepted across encryption-level boundaries in
+  0.23.44 (severity 5.3 medium). Reached transitively via
+  `aws-sdk-s3 → aws-smithy-http-client → rustls`, so the client
+  side of every S3 request was affected. Applied via
+  `cargo update -p rustls`; no code changes.
+
+### Chore
+
+- **Drop the stale `RUSTSEC-2026-0253` (lru unsound) ignore from
+  `.cargo/audit.toml` and `deny.toml`.** `aws-sdk-s3 1.146.1`
+  now pulls `lru 0.18.4` transitively — verified via
+  `cargo tree -i lru` on 2026-09-18 — so the advisory no longer
+  applies to this build. Keeping the ignore around triggered a
+  `cargo deny check` warning
+  (`warning[advisory-not-detected]`).
+
 ## [0.2.1-alpha] - 2026-09-14
 
 Base-image security patch. Supersedes `0.2.0-alpha`, which never
