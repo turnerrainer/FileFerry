@@ -29,6 +29,45 @@ Response:
 {"status":"ok"}
 ```
 
+## ⚠️ Security posture — read before exposing
+
+**FileFerry ships with no built-in authentication on the file-transfer
+endpoints.** The demo command above binds to `0.0.0.0:8080`; on any
+network where that port is reachable, `GET /v1/files` enumerates the
+FS root or the S3 bucket and `POST /v1/files/copy` triggers backend
+I/O (and, if S3 is wired, real S3 API calls + egress bandwidth billed
+per-request). Two supported deployment models:
+
+1. **Behind a reverse proxy** (default assumption — Ruuter, nginx,
+   Caddy). Terminate auth + rate-limiting there; leave FileFerry on
+   `127.0.0.1`. Set `security.trust_network: true` in
+   `fileferry.yaml` to silence the boot WARN once the proxy is in
+   place.
+2. **Inter-service bearer token** (opt-in). Set
+   `security.inter_service_token_env: FILEFERRY_INTER_SERVICE_TOKEN`
+   in `fileferry.yaml`, then supply the token via the named env var.
+   `GET /v1/files` and `POST /v1/files/copy` require
+   `Authorization: Bearer <token>` (constant-time compared);
+   `/` and `/health` remain open for liveness probes.
+
+Also:
+
+- **`/api` (OpenAPI recon endpoint) is off by default.** Set
+  `FILEFERRY_ADMIN_ENABLED=1` at boot to serve it. When disabled
+  it returns 404 (not 401 — the gate's existence itself doesn't
+  leak).
+- **CORS is not implemented in-process.** A non-empty
+  `cors_origin` in `fileferry.yaml` is a hard boot failure —
+  terminate CORS at the reverse proxy.
+- **The shipped `docker-compose.yml` runs with
+  `read_only: true` rootfs**, uid 1000, `no-new-privileges`,
+  `cap_drop: [ALL]`, and a private `tmpfs /tmp`. Overrides that
+  weaken these need explicit justification.
+
+Full posture including disclosure policy: [`SECURITY.md`](./SECURITY.md).
+Every gate above is regression-tested; the invariant tables in
+[`CLAUDE.md`](./CLAUDE.md) §2 name the tests.
+
 ## Build from source
 
 ```bash
