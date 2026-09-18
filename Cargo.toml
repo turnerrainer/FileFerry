@@ -67,6 +67,9 @@ subtle = "2.6"
 
 [dev-dependencies]
 tower = { version = "0.4", features = ["util"] }
+# T-17 regression test needs `tokio::time::pause` / `advance` to drive
+# the body-read-timeout in virtual time instead of wall-clock 30 s.
+tokio = { version = "1", features = ["test-util"] }
 
 [[bin]]
 name = "fileferry"

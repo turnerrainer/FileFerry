@@ -3,6 +3,16 @@
 //! `{error, message}` via `FerryError`.
 //!
 //! Reference: h2ck.me/FileFerry/v1/BREAK-TESTS/RUNTIME-FINDINGS.md FN2.
+//!
+//! T-17: `TypedJson::from_request` also wraps the inner Json extractor
+//! in a `tokio::time::timeout` so a slow-drip HTTP body can't hold a
+//! request open for up to `limits.request_timeout_secs` (5 min
+//! default). The narrower cap defends the accept-queue: a hostile
+//! peer that opens a POST and dribbles 1 byte every 60 s used to
+//! consume a full connection slot for the entire request-timeout
+//! window. See `BODY_READ_TIMEOUT`.
+
+use std::time::Duration;
 
 use async_trait::async_trait;
 use axum::extract::rejection::QueryRejection;
@@ -12,6 +22,17 @@ use axum::http::StatusCode;
 use serde::de::DeserializeOwned;
 
 use crate::error::{clip_user_message, FerryError};
+
+/// T-17: hard cap on the time `TypedJson` will wait for the caller
+/// to finish sending a JSON body. Kept as a const (not a config
+/// field) because the JSON bodies FileFerry accepts are small
+/// (`CopyFileRequest` — a handful of strings, well under 1 KiB in
+/// practice); 30 s is orders of magnitude more than a healthy peer
+/// ever needs. Independent of `limits.request_timeout_secs` (which
+/// covers the whole request including the backend copy) so a slow
+/// body can't hold a connection slot until the total-request cap
+/// eventually fires.
+pub const BODY_READ_TIMEOUT: Duration = Duration::from_secs(30);
 
 /// Wrapper around `axum::extract::Query<T>` whose rejection is a
 /// `FerryError::BadQuery` — surfaces as structured 400 JSON.
@@ -57,7 +78,18 @@ where
     type Rejection = FerryError;
 
     async fn from_request(req: Request, state: &S) -> Result<Self, Self::Rejection> {
-        match Json::<T>::from_request(req, state).await {
+        // T-17: hard cap on body-read time. `Json::from_request`
+        // reads the entire body before deserialising; without this
+        // guard a slow-drip peer could hold the connection open for
+        // up to `limits.request_timeout_secs` (5 min default). The
+        // narrower `BODY_READ_TIMEOUT` targets the accept-queue
+        // exhaustion angle specifically.
+        let inner = Json::<T>::from_request(req, state);
+        let result = match tokio::time::timeout(BODY_READ_TIMEOUT, inner).await {
+            Ok(res) => res,
+            Err(_elapsed) => return Err(FerryError::BodyReadTimeout),
+        };
+        match result {
             Ok(Json(v)) => Ok(TypedJson(v)),
             Err(rej) => {
                 // Body-limit misses surface with the composite

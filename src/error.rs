@@ -78,6 +78,14 @@ pub enum FerryError {
     #[error("request body exceeds server cap of {cap} bytes")]
     BodyTooLarge { cap: usize },
 
+    /// T-17: caller took too long to finish sending the JSON body.
+    /// Defends the accept queue against slow-drip peers that would
+    /// otherwise hold a connection slot for up to
+    /// `limits.request_timeout_secs`. Surfaces as HTTP 408 with the
+    /// structured `body_read_timeout` code.
+    #[error("timed out waiting for request body")]
+    BodyReadTimeout,
+
     #[error("upstream storage error: {0}")]
     Upstream(String),
 
@@ -100,6 +108,7 @@ impl FerryError {
             FerryError::TransferTooLarge { .. }
             | FerryError::ListLimitTooLarge { .. }
             | FerryError::BodyTooLarge { .. } => StatusCode::PAYLOAD_TOO_LARGE,
+            FerryError::BodyReadTimeout => StatusCode::REQUEST_TIMEOUT,
             FerryError::Upstream(_) => StatusCode::BAD_GATEWAY,
             FerryError::Io(_) | FerryError::Internal(_) => StatusCode::INTERNAL_SERVER_ERROR,
         }
@@ -116,6 +125,7 @@ impl FerryError {
             FerryError::BadQuery(_) => "bad_query",
             FerryError::BadBody(_) => "bad_body",
             FerryError::BodyTooLarge { .. } => "body_too_large",
+            FerryError::BodyReadTimeout => "body_read_timeout",
             FerryError::Upstream(_) => "upstream_error",
             FerryError::Io(_) => "io_error",
             FerryError::Internal(_) => "internal_error",
