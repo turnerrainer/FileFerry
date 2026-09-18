@@ -11,10 +11,18 @@ use axum::http::request::Parts;
 use axum::http::StatusCode;
 use serde::de::DeserializeOwned;
 
-use crate::error::FerryError;
+use crate::error::{clip_user_message, FerryError};
 
 /// Wrapper around `axum::extract::Query<T>` whose rejection is a
 /// `FerryError::BadQuery` — surfaces as structured 400 JSON.
+///
+/// AP-6 / T-11: the axum rejection text embeds the offending query
+/// value verbatim (e.g. `unknown variant `UNKNOWN_LONG_VALUE...`,
+/// expected `FS` or `S3``). Clip the inner message at 256 chars
+/// before stashing it in `BadQuery` so the response body stays
+/// bounded regardless of caller input size. The `IntoResponse` impl
+/// re-applies the same clip; belt-and-braces so refactors on either
+/// side don't lose the guarantee.
 pub struct TypedQuery<T>(pub T);
 
 #[async_trait]
@@ -29,9 +37,9 @@ where
         match Query::<T>::from_request_parts(parts, state).await {
             Ok(Query(v)) => Ok(TypedQuery(v)),
             Err(QueryRejection::FailedToDeserializeQueryString(err)) => {
-                Err(FerryError::BadQuery(err.to_string()))
+                Err(FerryError::BadQuery(clip_user_message(&err.to_string())))
             }
-            Err(other) => Err(FerryError::BadQuery(other.to_string())),
+            Err(other) => Err(FerryError::BadQuery(clip_user_message(&other.to_string()))),
         }
     }
 }
@@ -62,7 +70,7 @@ where
                 if status == StatusCode::PAYLOAD_TOO_LARGE {
                     Err(FerryError::BodyTooLarge { cap: 0 })
                 } else {
-                    Err(FerryError::BadBody(msg))
+                    Err(FerryError::BadBody(clip_user_message(&msg)))
                 }
             }
         }

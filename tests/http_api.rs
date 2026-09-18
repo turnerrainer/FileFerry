@@ -1115,3 +1115,84 @@ async fn auth_required_health_and_root_still_open() {
         "`/api` must 404 when admin gate is off, not 401"
     );
 }
+
+#[tokio::test]
+async fn error_message_body_bounded_regardless_of_query_size() {
+    // AP-6 / T-11: an attacker sending a huge query value used to
+    // surface as a proportionally huge error message
+    // (`Failed to deserialize query string: unknown variant
+    // <4KB of A's>`). Enforce that the response body's `message`
+    // field is capped so amplification isn't a valid signal.
+    let tmp = TempDir::new().unwrap();
+    let app = build_router(app_state_with_fs_only(tmp.path()));
+    let huge: String = "A".repeat(4096);
+    let uri = format!("/v1/files?type={huge}");
+    let resp = app
+        .oneshot(Request::get(&uri).body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    // Status is a client error — either 400 (bad_query) or 422 (deserialize).
+    assert!(
+        resp.status().is_client_error(),
+        "got status {}",
+        resp.status()
+    );
+    let json = parse_json(resp.into_body()).await;
+    let msg = json.get("message").and_then(|v| v.as_str()).unwrap_or("");
+    let msg_chars = msg.chars().count();
+    // Cap is 256 chars (see error::MAX_USER_MESSAGE_LEN). Enforce
+    // strictly — a leaky refactor here re-enables the amplifier.
+    assert!(
+        msg_chars <= 256,
+        "response `message` exceeds 256-char cap: {} chars, body {:?}",
+        msg_chars,
+        msg
+    );
+    // The amplification signal is that the response body grows with the
+    // input size. Directly assert: response length must not scale with
+    // the 4KB input.
+    assert!(
+        msg.chars().filter(|c| *c == 'A').count() < 500,
+        "clip failed: {} `A`s survived in message {:?}",
+        msg.chars().filter(|c| *c == 'A').count(),
+        msg
+    );
+}
+
+#[tokio::test]
+async fn malformed_json_body_error_message_is_clipped() {
+    // AP-6 / T-11: serde_json's parse-error message can embed a chunk
+    // of the offending payload verbatim. Send a 4 KB junk body with a
+    // JSON content-type; the response message must stay bounded.
+    let tmp = TempDir::new().unwrap();
+    let app = build_router(app_state_with_fs_only(tmp.path()));
+    let junk: String = "Z".repeat(4096);
+    let resp = app
+        .oneshot(
+            Request::post("/v1/files/copy")
+                .header("content-type", "application/json")
+                .body(Body::from(junk))
+                .unwrap(),
+        )
+        .await
+        .unwrap();
+    assert!(
+        resp.status().is_client_error(),
+        "got status {}",
+        resp.status()
+    );
+    let json = parse_json(resp.into_body()).await;
+    let msg = json.get("message").and_then(|v| v.as_str()).unwrap_or("");
+    assert!(
+        msg.chars().count() <= 256,
+        "malformed-JSON message exceeds cap: {} chars, body {:?}",
+        msg.chars().count(),
+        msg
+    );
+    assert!(
+        msg.chars().filter(|c| *c == 'Z').count() < 500,
+        "clip failed on JSON parse error: {} Z's in {:?}",
+        msg.chars().filter(|c| *c == 'Z').count(),
+        msg
+    );
+}
