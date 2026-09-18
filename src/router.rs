@@ -101,7 +101,18 @@ async fn health() -> impl IntoResponse {
 /// dependency (`utoipa` / `okapi`) is overkill; large enough that
 /// clients want *something* discoverable. Refresh in-lockstep with
 /// the route table above.
+///
+/// F-FF-3 (h2ck.me v1 AP-2, fleet stronghold §3.3): `/api` is a recon
+/// endpoint and defaults to 404 unless the operator explicitly sets
+/// `FILEFERRY_ADMIN_ENABLED=1` at boot. Even when admin is enabled,
+/// `documentation_enabled: false` in YAML still 404s the response.
+/// The dual gate lets operators keep the env-gate on for tooling
+/// (`fileferry doctor`, health scrapers) while silencing the doc
+/// endpoint per-config.
 async fn openapi(State(state): State<AppState>) -> impl IntoResponse {
+    if !state.config.security.admin_enabled {
+        return StatusCode::NOT_FOUND.into_response();
+    }
     if !state.config.documentation_enabled {
         return (
             StatusCode::NOT_FOUND,

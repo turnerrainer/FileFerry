@@ -32,6 +32,24 @@ fn app_state_with_fs_only(root: &std::path::Path) -> AppState {
     }
 }
 
+/// F-FF-3: `/api` defaults to 404 (admin off). Tests that specifically
+/// exercise `/api` need to opt into admin_enabled=true to reach the
+/// document handler.
+fn app_state_with_admin_enabled(root: &std::path::Path) -> AppState {
+    let fs: BackendRef = Arc::new(
+        FsBackend::new(&FsConfig {
+            data_directory: root.to_path_buf(),
+        })
+        .unwrap(),
+    );
+    let mut cfg = AppConfig::default();
+    cfg.security.admin_enabled = true;
+    AppState {
+        backends: Backends { fs, s3: None },
+        config: Arc::new(cfg),
+    }
+}
+
 async fn parse_json(body: Body) -> Value {
     let bytes = to_bytes(body, usize::MAX).await.unwrap();
     serde_json::from_slice(&bytes).unwrap()
@@ -55,8 +73,12 @@ async fn every_response_carries_security_headers() {
     // Fleet stronghold §5.1: every response must have the five default
     // security headers. Sample the public routes (200) AND an error
     // response (400) to confirm the middleware wraps both branches.
+    // F-FF-3: `/api` requires admin_enabled=true to reach the doc
+    // handler; use the admin-enabled state so the header assertions
+    // exercise the same code path a live admin-enabled deployment
+    // would.
     let tmp = TempDir::new().unwrap();
-    let app = build_router(app_state_with_fs_only(tmp.path()));
+    let app = build_router(app_state_with_admin_enabled(tmp.path()));
     let paths = ["/", "/health", "/api"];
     for path in paths {
         let resp = app
@@ -164,8 +186,10 @@ async fn health_returns_ok() {
 
 #[tokio::test]
 async fn openapi_lists_expected_paths() {
+    // F-FF-3: `/api` requires FILEFERRY_ADMIN_ENABLED=1 (or, in tests,
+    // security.admin_enabled=true) to reach the doc handler.
     let tmp = TempDir::new().unwrap();
-    let app = build_router(app_state_with_fs_only(tmp.path()));
+    let app = build_router(app_state_with_admin_enabled(tmp.path()));
     let resp = app
         .oneshot(Request::get("/api").body(Body::empty()).unwrap())
         .await
@@ -176,6 +200,62 @@ async fn openapi_lists_expected_paths() {
     for p in ["/", "/health", "/v1/files", "/v1/files/copy"] {
         assert!(paths.contains_key(p), "openapi missing {p}");
     }
+}
+
+#[tokio::test]
+async fn openapi_returns_404_when_admin_disabled_by_default() {
+    // F-FF-3 regression: `/api` is a recon endpoint (leaks the route
+    // table + version) and defaults to 404 unless the operator sets
+    // FILEFERRY_ADMIN_ENABLED. `AppConfig::default()` leaves
+    // admin_enabled=false, so `/api` on a default deployment must
+    // return 404 with no body content that leaks the version.
+    let tmp = TempDir::new().unwrap();
+    let app = build_router(app_state_with_fs_only(tmp.path()));
+    let resp = app
+        .oneshot(Request::get("/api").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
+    let bytes = to_bytes(resp.into_body(), usize::MAX).await.unwrap();
+    let text = String::from_utf8_lossy(&bytes);
+    // The 404 must not leak the CARGO_PKG_VERSION nor the route
+    // table — those are exactly the recon signals AP-2 targets.
+    assert!(
+        !text.contains(env!("CARGO_PKG_VERSION")),
+        "404 body leaked version: {text:?}"
+    );
+    assert!(
+        !text.contains("/v1/files"),
+        "404 body leaked route table: {text:?}"
+    );
+}
+
+#[tokio::test]
+async fn openapi_returns_404_when_admin_enabled_but_docs_disabled() {
+    // F-FF-3 dual-gate: `documentation_enabled=false` still 404s the
+    // response even when admin_enabled=true. Lets operators keep the
+    // env-gate on for tooling while silencing the doc endpoint via
+    // YAML.
+    let tmp = TempDir::new().unwrap();
+    let fs: BackendRef = Arc::new(
+        FsBackend::new(&FsConfig {
+            data_directory: tmp.path().to_path_buf(),
+        })
+        .unwrap(),
+    );
+    let mut cfg = AppConfig::default();
+    cfg.security.admin_enabled = true;
+    cfg.documentation_enabled = false;
+    let state = AppState {
+        backends: Backends { fs, s3: None },
+        config: Arc::new(cfg),
+    };
+    let app = build_router(state);
+    let resp = app
+        .oneshot(Request::get("/api").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(resp.status(), StatusCode::NOT_FOUND);
 }
 
 #[tokio::test]
@@ -899,6 +979,7 @@ fn app_state_with_auth(root: &std::path::Path, token: &str) -> AppState {
         security: SecurityConfig {
             inter_service_token: Some(token.to_string()),
             trust_network: false,
+            admin_enabled: false,
         },
         ..AppConfig::default()
     };
@@ -999,14 +1080,18 @@ async fn auth_required_copy_rejects_missing_bearer() {
 }
 
 #[tokio::test]
-async fn auth_required_health_root_and_api_still_open() {
-    // F-FF-3 nuance: `/api` remains public in this feature (see
-    // SecurityConfig doc) because reverse-proxy discovery expects it.
-    // `/`, `/health` MUST always be public.
+async fn auth_required_health_and_root_still_open() {
+    // F-FF-1/F-FF-2: `/`, `/health` MUST remain public regardless of
+    // bearer-token configuration — liveness probes and load balancers
+    // rely on them.
+    // F-FF-3 (T-6): `/api` moved OUT of "always public" — it now
+    // defaults to 404 (admin off). The separate
+    // `openapi_returns_404_when_admin_disabled_by_default` test
+    // covers that gate; this test asserts only the never-gated pair.
     let tmp = TempDir::new().unwrap();
     let app_state = app_state_with_auth(tmp.path(), "supersecret-token");
     let app = build_router(app_state);
-    for path in ["/", "/health", "/api"] {
+    for path in ["/", "/health"] {
         let resp = app
             .clone()
             .oneshot(Request::get(path).body(Body::empty()).unwrap())
@@ -1018,4 +1103,15 @@ async fn auth_required_health_root_and_api_still_open() {
             "public route {path} must not require bearer"
         );
     }
+    // `/api` returns 404 by default (admin off) — NOT 401 (would leak
+    // the admin gate's existence to an unauth caller).
+    let resp = app
+        .oneshot(Request::get("/api").body(Body::empty()).unwrap())
+        .await
+        .unwrap();
+    assert_eq!(
+        resp.status(),
+        StatusCode::NOT_FOUND,
+        "`/api` must 404 when admin gate is off, not 401"
+    );
 }

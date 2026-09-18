@@ -17,6 +17,25 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
   side of every S3 request was affected. Applied via
   `cargo update -p rustls`; no code changes.
 
+### Changed (breaking)
+
+- **`GET /api` (OpenAPI recon endpoint) now defaults to 404
+  (F-FF-3 / T-6).** Serve it by setting `FILEFERRY_ADMIN_ENABLED`
+  to `1`, `true`, or `yes` at boot (case-insensitive). When the
+  env-gate is disabled, `/api` returns a **bodyless 404** — not
+  401 — so the response never reveals the gate's existence to an
+  unauth caller. The `documentation_enabled` YAML flag still
+  applies on top of the env-gate: when admin is enabled but
+  `documentation_enabled: false`, `/api` still 404s (dual gate
+  lets operators keep the env var on for tooling while silencing
+  the doc endpoint per-config). `/`, `/health` remain public
+  unconditionally. Rationale: `/api` leaked the FileFerry
+  version, the route table, and the DTO shapes to any unauth
+  caller — exactly the reconnaissance signal AP-2 (fleet
+  stronghold §3.3) targets. Clients or CI tooling that scraped
+  `/api` from the default endpoint must set the env var
+  explicitly.
+
 ### Chore
 
 - **Drop the stale `RUSTSEC-2026-0253` (lru unsound) ignore from
