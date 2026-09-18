@@ -194,6 +194,15 @@ not weaken it): `read_only: true` rootfs, `no-new-privileges: true`,
 | `FILEFERRY_CONFIG` | Path to YAML config (higher precedence than `./fileferry.yaml`) |
 | `FILEFERRY_OFFLINE` | `1`/`true`/`yes` → S3 backend is stubbed; every S3 call returns `Upstream("offline mode")`. FS backend unaffected. For pentest / break-tests |
 | `FILEFERRY_ADMIN_ENABLED` | `1`/`true`/`yes` → serve `/api` (OpenAPI recon endpoint). Absent / anything else → `/api` returns 404. F-FF-3 / T-6 (AP-2 fleet stronghold §3.3): recon endpoints are opt-in |
+
+### 4.2 CLI subcommands
+
+- `fileferry` (no subcommand) — run the HTTP server (default).
+- `fileferry doctor [--config <path>]` — config + posture
+  health check (T-22). Loads the config, runs the preflight
+  WARN block, prints a green/amber report to stdout, exits
+  `0` (clean), `1` (WARNs), or `2` (config invalid). Handled
+  before tokio starts; safe to run in CI. Secrets are masked.
 | Env var named by `security.inter_service_token_env` | Value is the bearer token clients must present as `Authorization: Bearer <value>` on `/v1/files*` |
 | Env vars named by `s3.access_key_id_env` / `s3.secret_access_key_env` | S3 credentials, resolved at boot; missing = hard boot failure |
 
@@ -232,6 +241,13 @@ not weaken it): `read_only: true` rootfs, `no-new-privileges: true`,
   key on it without matching the wire message. Adding a check:
   add a `fn check_<n>` returning `Option<BootWarning>` and
   reference it from `preflight`. Never reuse an existing id.
+- `src/doctor.rs` — `fileferry doctor` subcommand (T-22).
+  Loads the runtime config, runs `boot_warnings::preflight`,
+  prints a green/amber report to stdout, exits `0`/`1`/`2`.
+  Handled in `main()` BEFORE tokio starts so no runtime is
+  spun up for a config check. Secrets render as `SET (masked)`
+  — the raw bearer token never lands in the report. See
+  `tests/doctor_cli.rs` for the E2E subprocess test.
 - `src/main.rs` — boot sequence: config load → diagnose → backend
   init (offline check here) → preflight WARN block
   (`boot_warnings::log_preflight`) → serve. Version bumps and

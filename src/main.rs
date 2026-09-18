@@ -1,5 +1,6 @@
 use std::net::SocketAddr;
 use std::path::PathBuf;
+use std::process::ExitCode;
 use std::sync::Arc;
 
 use anyhow::Context;
@@ -12,11 +13,30 @@ use fileferry::backend::{BackendRef, Backends};
 use fileferry::boot_warnings::log_preflight;
 use fileferry::config;
 use fileferry::diagnose;
+use fileferry::doctor;
 use fileferry::model::StorageType;
 use fileferry::router::{build_router, AppState};
 
+fn main() -> ExitCode {
+    // T-22: `fileferry doctor` is a synchronous config check. Handled
+    // BEFORE we bring up the tokio runtime so it stays fast (no
+    // multi-threaded scheduler init) and doesn't emit tracing lines
+    // to stderr — doctor output is stdout only for shell composition.
+    if std::env::args().any(|a| a == "doctor") {
+        let explicit_config = parse_config_arg();
+        return ExitCode::from(doctor::run(explicit_config.as_deref()) as u8);
+    }
+    match tokio_main() {
+        Ok(()) => ExitCode::SUCCESS,
+        Err(e) => {
+            eprintln!("fatal: {e:#}");
+            ExitCode::FAILURE
+        }
+    }
+}
+
 #[tokio::main]
-async fn main() -> anyhow::Result<()> {
+async fn tokio_main() -> anyhow::Result<()> {
     init_tracing();
 
     let explicit_config = parse_config_arg();
