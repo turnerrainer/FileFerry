@@ -16,6 +16,7 @@ use fileferry::diagnose;
 use fileferry::doctor;
 use fileferry::model::StorageType;
 use fileferry::router::{build_router, AppState};
+use fileferry::shutdown::shutdown_signal;
 
 fn main() -> ExitCode {
     // T-22: `fileferry doctor` is a synchronous config check. Handled
@@ -99,7 +100,15 @@ async fn tokio_main() -> anyhow::Result<()> {
     log_preflight(&cfg, &addr);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!("listening on http://{addr}");
-    axum::serve(listener, router).await?;
+    // T-23 / OWASP §34.4: wire SIGTERM + SIGINT to a graceful
+    // shutdown so in-flight requests complete before the container
+    // exits. Under `docker stop` (default 10 s grace) or a K8s
+    // rolling-restart, this stops a `POST /v1/files/copy` from
+    // dying half-way with no audit-log line. See src/shutdown.rs.
+    axum::serve(listener, router)
+        .with_graceful_shutdown(shutdown_signal())
+        .await?;
+    tracing::info!("shutdown complete");
     Ok(())
 }
 

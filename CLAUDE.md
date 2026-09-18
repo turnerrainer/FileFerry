@@ -97,6 +97,7 @@ then decide.
 | Copy-audit log line hashes source/destination paths (SHA-256 first 12 hex) — never emit raw path to logs (FN-LOG-3 / §S4) | `src/backend/mod.rs` `path_hash` inside `stream_copy` | `path_hash_is_deterministic_and_short`, `path_hash_does_not_contain_raw_path_substring` |
 | User-controlled substrings in error responses and log lines are clipped to `MAX_USER_MESSAGE_LEN` (256 chars) with a trailing `...` marker (AP-6 / T-11). Applied twice: once at extractor construction (`TypedQuery` / `TypedJson`) and again in `FerryError::IntoResponse` — belt-and-braces so a refactor on either side keeps the bound. | `src/error.rs` `clip_user_message`, `src/extract.rs` | `clip_user_message_*` (unit), `error_message_body_bounded_regardless_of_query_size`, `malformed_json_body_error_message_is_clipped` |
 | Known route + wrong method → **405 Method Not Allowed** (with `allow: <valid methods>` response header per RFC 7231 §6.5.5), NOT 404 (T-18). Unknown route → 404. Behavior provided by axum's routing layer; regression tests pin it so a future middleware layer or router refactor doesn't accidentally swallow it. | `src/router.rs` route table | `method_not_allowed_on_known_route_returns_405`, `unknown_route_still_returns_404` |
+| Graceful shutdown on SIGTERM / SIGINT — axum stops accepting new connections when the signal fires and waits for in-flight requests to complete (T-23, OWASP-PROBES §34.4). Under `docker stop` / K8s rolling-restart, a `POST /v1/files/copy` finishes cleanly and emits its audit-log line instead of dying half-way. | `src/shutdown.rs` `shutdown_signal`, wired via `axum::serve(...).with_graceful_shutdown(...)` in `src/main.rs` | `shutdown_signal_is_pending_then_resolves_on_sigterm` |
 
 ### 2.3 Public-exposure defenses (F-FF-series, landed 2026-09-13)
 
@@ -226,6 +227,12 @@ not weaken it): `read_only: true` rootfs, `no-new-privileges: true`,
 - `src/backend/s3.rs` — S3 backend + `start_after_key` derivation.
 - `src/backend/offline.rs` — offline stub returned when
   `FILEFERRY_OFFLINE` is truthy AND an S3 block is configured.
+- `src/shutdown.rs` — graceful-shutdown future awaited by
+  `axum::serve(...).with_graceful_shutdown(...)`. Fires on
+  SIGTERM (container) or SIGINT (dev Ctrl-C); wired in
+  `src/main.rs`. In-flight `POST /v1/files/copy` requests
+  complete cleanly under `docker stop` / K8s rolling-restart
+  instead of dying half-way with no audit-log line.
 - `src/auth.rs` — `require_bearer` middleware. Constant-time compare
   via `subtle`. Applied only when `security.inter_service_token` is
   `Some`.

@@ -10,5 +10,6 @@ pub mod extract;
 pub mod model;
 pub mod router;
 pub mod security_headers;
+pub mod shutdown;
 pub mod trace_headers;
 pub mod validate;
