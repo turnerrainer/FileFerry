@@ -9,6 +9,7 @@ use fileferry::backend::fs::FsBackend;
 use fileferry::backend::offline::{offline_from_env, OfflineBackend};
 use fileferry::backend::s3::S3Backend;
 use fileferry::backend::{BackendRef, Backends};
+use fileferry::boot_warnings::log_preflight;
 use fileferry::config;
 use fileferry::diagnose;
 use fileferry::model::StorageType;
@@ -71,41 +72,15 @@ async fn main() -> anyhow::Result<()> {
     let router = build_router(state);
 
     let addr = SocketAddr::from(([0, 0, 0, 0], cfg.port));
-    warn_if_unauth_non_loopback(&cfg, &addr);
+    // T-21 (fleet stronghold §11, TIM pattern): numbered preflight
+    // WARN block. Each check has a stable `W-<n>` id so log-alert
+    // pipelines can key on the id without matching the wire message.
+    // See src/boot_warnings.rs for the check list.
+    log_preflight(&cfg, &addr);
     let listener = tokio::net::TcpListener::bind(addr).await?;
     tracing::info!("listening on http://{addr}");
     axum::serve(listener, router).await?;
     Ok(())
-}
-
-/// F-FF-1 / F-FF-2 (h2ck.me v1 public-exposure): warn loudly when the
-/// listener is reachable from outside the local host AND no inter-
-/// service bearer is configured AND the operator hasn't opted into the
-/// "trust the reverse proxy" posture. The WARN names the concrete
-/// impact (S3 API cost, cross-backend data exfil) so an operator reading
-/// the boot log knows the risk without leaving the log.
-///
-/// Kept as a WARN, not a boot refusal, to preserve backwards
-/// compatibility with existing v0.1.x deployments. Fleet stronghold
-/// §3.1 (FLEET-STRONGHOLDS.md) says future releases should promote
-/// this to a hard refuse.
-fn warn_if_unauth_non_loopback(cfg: &fileferry::config::AppConfig, addr: &SocketAddr) {
-    let is_loopback = addr.ip().is_loopback();
-    let has_token = cfg.security.inter_service_token.is_some();
-    if is_loopback || has_token || cfg.security.trust_network {
-        return;
-    }
-    tracing::warn!(
-        bind = %addr,
-        "security.inter_service_token_env is unset AND bind is non-loopback AND \
-         security.trust_network=false. `/v1/files*` are open to any network caller. \
-         Every unauth `POST /v1/files/copy` triggers backend I/O and S3-billed API \
-         calls; every unauth `GET /v1/files` enumerates the FS root or the S3 bucket. \
-         Set security.inter_service_token_env to the name of an env var whose value \
-         is the required bearer token, OR set security.trust_network=true if a \
-         reverse proxy / service mesh already authenticates every request before it \
-         reaches FileFerry (see SECURITY.md)."
-    );
 }
 
 fn init_tracing() {

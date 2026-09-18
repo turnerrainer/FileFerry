@@ -7,6 +7,24 @@ and this project adheres to [Semantic Versioning](https://semver.org/spec/v2.0.0
 
 ## [Unreleased]
 
+### Added
+
+- **T-21 — numbered preflight WARN block (fleet stronghold §11,
+  TIM pattern).** `warn_if_unauth_non_loopback` grew into six
+  checks with stable `W-<n>` ids. `W-1` is the previous
+  unauth-non-loopback check; `W-2..W-6` cover
+  `trust_network=true` without a token, `FILEFERRY_ADMIN_ENABLED`
+  on a non-loopback bind, `documentation_enabled: true` on a
+  non-loopback bind (heads-up for the pre-admin state),
+  `copy_inactivity_secs` past the 5 minute ceiling (F3 slow-drip
+  defence weakened), and `max_request_bytes` past 100 MiB
+  (usually a misconception that the request body carries the
+  file payload). Each check has a legitimate override so a
+  hard fail would break existing deployments; the id makes the
+  check log-alertable without matching against the wire
+  message. New module `src/boot_warnings.rs` — adding a check
+  is one `fn check_<n>` plus one entry in `preflight`.
+
 ### Security
 
 - **Bump `rustls` to 0.23.45** (was 0.23.44) to pick up the fix
