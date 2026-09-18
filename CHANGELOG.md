@@ -609,7 +609,8 @@ client should know what is and isn't reproduced:
   silent-accept behaviour for the alpha window; will tighten
   to `400` with a specific error code in `v0.2.0`.
 
-[Unreleased]: https://github.com/turnerrainer/fileferry/compare/v0.2.1-alpha...HEAD
+[Unreleased]: https://github.com/turnerrainer/fileferry/compare/v0.2.2-alpha...HEAD
+[0.2.2-alpha]: https://github.com/turnerrainer/fileferry/releases/tag/v0.2.2-alpha
 [0.2.1-alpha]: https://github.com/turnerrainer/fileferry/releases/tag/v0.2.1-alpha
 [0.2.0-alpha]: https://github.com/turnerrainer/fileferry/releases/tag/v0.2.0-alpha
 [0.1.3-alpha]: https://github.com/turnerrainer/fileferry/releases/tag/v0.1.3-alpha
