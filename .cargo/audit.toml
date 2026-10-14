@@ -15,5 +15,21 @@
 # `cargo tree -i lru` on 2026-09-18. The advisory no longer
 # applies to this build; the ignore was dropped in the same
 # commit that removed it from `deny.toml`.
+#
+# RUSTSEC-2024-0449 (unsafe-libyaml 0.2.11 unmaintained).
+# Informational advisory issued 2026-10-12 — the upstream
+# repo was archived 2024-03-25. The crate is pulled in
+# transitively via `serde_yaml_ng -> unsafe-libyaml`, and
+# the entire serde_yaml / serde_yaml_ng / serde_yaml_bw fork
+# chain still relies on it (serde_yaml_bw forks it as
+# `unsafe-libyaml-norway`; `serde_yml` is deprecated). No
+# patched version exists. FileFerry uses the crate at boot
+# only, to parse the operator-supplied `fileferry.yaml`
+# config file — not for runtime processing of untrusted
+# input. Risk surface is one trusted-source parse per
+# process. Migration to a pure-Rust parser (saphyr /
+# noyalib) is tracked for a future release; ignoring here
+# so CI remains actionable.
+# Review by: 2027-04-15
 [advisories]
-ignore = []
+ignore = ["RUSTSEC-2024-0449"]
