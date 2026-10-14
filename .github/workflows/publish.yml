@@ -126,6 +126,19 @@ jobs:
       # the recursion guard fixed in PR #20), leaving the tag
       # orphaned. Only "tag AND Release both exist" means the
       # release fully shipped and we can safely no-op.
+      #
+      # The Release probe uses `gh api` (not `gh release view`) so we
+      # can distinguish a real 404 from any other failure. The
+      # earlier `gh release view ... >/dev/null 2>&1` form collapsed
+      # transient 5xx / auth hiccups / rate-limit blips into
+      # "release doesn't exist" and dispatched a redundant publish
+      # on routine feature-PR merges (observed on PR #38). Behaviour
+      # now:
+      #   * HTTP 200 → `release_exists=true`
+      #   * HTTP 404 → `release_exists=false`
+      #   * anything else → fail the step loudly. Dispatching
+      #     publish on uncertainty is strictly worse than paging the
+      #     maintainer; a human re-run on the next push settles it.
       - name: Detect tag + Release existence
         id: exists
         env:
@@ -139,10 +152,18 @@ jobs:
           else
             tag_exists=false
           fi
-          if gh release view "${TAG_REF}" --repo "${REPO}" >/dev/null 2>&1; then
+          set +e
+          gh_err="$(gh api "repos/${REPO}/releases/tags/${TAG_REF}" --silent 2>&1 >/dev/null)"
+          rc=$?
+          set -e
+          if [ "$rc" -eq 0 ]; then
             release_exists=true
-          else
+          elif echo "$gh_err" | grep -q 'HTTP 404'; then
             release_exists=false
+          else
+            echo "::error::Release-existence probe for ${TAG_REF} failed non-404 (rc=${rc}): ${gh_err}"
+            echo "::error::Refusing to dispatch publish on uncertainty — re-run this job after the GitHub API recovers."
+            exit 1
           fi
           echo "tag_exists=${tag_exists}"         >> "$GITHUB_OUTPUT"
           echo "release_exists=${release_exists}" >> "$GITHUB_OUTPUT"
